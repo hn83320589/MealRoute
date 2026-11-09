@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="MealRoute.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    Title="MealRoute 社區送餐排班台">
+  <Grid>
+    <canvas:CanvasControl x:Name="MapCanvas" ClearColor="White" Draw="OnMapDraw" />
+  </Grid>
+</Window>

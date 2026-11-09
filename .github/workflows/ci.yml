@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test-publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore MealRoute.sln
+
+      - name: Build (core, view models, tests, CLI)
+        run: |
+          dotnet build src/MealRoute.Core -c Release --no-restore
+          dotnet build src/MealRoute.App.ViewModels -c Release --no-restore
+          dotnet build tools/MealRoute.Cli -c Release --no-restore
+          dotnet build tests/MealRoute.Tests -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/MealRoute.Tests -c Release --no-build --filter "Category!=Benchmark" --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Publish WinUI app (win-x64)
+        run: dotnet publish src/MealRoute.App -c Release -r win-x64 -p:Platform=x64 -o publish/win-x64
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MealRoute-win-x64
+          path: publish/win-x64
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
