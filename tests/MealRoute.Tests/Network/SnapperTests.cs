@@ -224,7 +224,7 @@ public class SnapperTests
     {
         Property.ForAll(6_000, 60, (r, _) =>
         {
-            var features = RandomGrid(r, 5, out _);
+            var features = RandomGrid(r, 5, out var unusedCount);
             var net = NetworkBuilder.Build(features);
             var analysis = NetworkAnalysis.Analyze(net);
             var points = Enumerable.Range(0, 20)
