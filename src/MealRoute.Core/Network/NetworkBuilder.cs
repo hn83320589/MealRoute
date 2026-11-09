@@ -27,42 +27,17 @@ public static class NetworkBuilder
         }
 
         // Edges in creation order: feature order, forward before backward.
-        var raw = new List<(int Tail, int Head, double Length, RoadClass Class, int Feature, bool Reversed)>();
+        var raw = new List<RoadNetwork.RawEdge>(features.Count * 2);
         for (var f = 0; f < features.Count; f++)
         {
             var feature = features[f];
             var a = NodeOf(feature.Coordinates[0]);
             var b = NodeOf(feature.Coordinates[^1]);
             var len = Haversine.PolylineLength(feature.Coordinates);
-            if (feature.Oneway != OnewayDirection.Backward) raw.Add((a, b, len, feature.Class, f, false));
-            if (feature.Oneway != OnewayDirection.Forward) raw.Add((b, a, len, feature.Class, f, true));
+            if (feature.Oneway != OnewayDirection.Backward) raw.Add(new(a, b, len, feature.Class, f, false, 0, len));
+            if (feature.Oneway != OnewayDirection.Forward) raw.Add(new(b, a, len, feature.Class, f, true, 0, len));
         }
 
-        // Stable counting sort by tail.
-        var n = nodes.Count;
-        var m = raw.Count;
-        var firstOut = new int[n + 1];
-        foreach (var e in raw) firstOut[e.Tail + 1]++;
-        for (var v = 0; v < n; v++) firstOut[v + 1] += firstOut[v];
-
-        var next = (int[])firstOut.Clone();
-        var tail = new int[m];
-        var head = new int[m];
-        var length = new double[m];
-        var cls = new RoadClass[m];
-        var feat = new int[m];
-        var rev = new bool[m];
-        foreach (var e in raw)
-        {
-            var id = next[e.Tail]++;
-            tail[id] = e.Tail;
-            head[id] = e.Head;
-            length[id] = e.Length;
-            cls[id] = e.Class;
-            feat[id] = e.Feature;
-            rev[id] = e.Reversed;
-        }
-
-        return new RoadNetwork(nodes.ToArray(), firstOut, tail, head, length, cls, feat, rev, features);
+        return RoadNetwork.Create(nodes.ToArray(), raw, features);
     }
 }
