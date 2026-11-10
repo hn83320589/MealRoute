@@ -1,3 +1,7 @@
 * text=auto
 *.cs text diff=csharp
 *.sln text eol=crlf
+# Data files are hashed (network references) and must keep their exact bytes.
+*.geojson -text
+samples/** -text
+benchmarks/** -text

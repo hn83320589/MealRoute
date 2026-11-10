@@ -29,6 +29,19 @@ jobs:
       - name: Test
         run: dotnet test tests/MealRoute.Tests -c Release --no-build --filter "Category!=Benchmark" --logger "trx;LogFileName=results.trx" --results-directory TestResults
 
+      - name: Report failed tests as annotations
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem TestResults -Filter *.trx -Recurse | ForEach-Object {
+            [xml]$trx = Get-Content $_.FullName
+            $trx.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -eq 'Failed' } | ForEach-Object {
+              $msg = ($_.Output.ErrorInfo.Message -replace "`r?`n", ' ')
+              if ($msg.Length -gt 900) { $msg = $msg.Substring(0, 900) }
+              Write-Output "::error title=$($_.testName)::$msg"
+            }
+          }
+
       - name: Publish WinUI app (win-x64)
         run: dotnet publish src/MealRoute.App -c Release -r win-x64 -p:Platform=x64 -o publish/win-x64
 
