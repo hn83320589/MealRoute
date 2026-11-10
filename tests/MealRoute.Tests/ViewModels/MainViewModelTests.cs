@@ -67,8 +67,24 @@ public class MainViewModelTests
         var path = Path.Combine(kit.Dir, "shared.json");
         ProjectSerializer.Save(project with { Network = new NetworkReference(networkPath, "00") }, path);
         await kit.Main.OpenProjectFromPathAsync(path);
-        Assert.Contains("網路或裝置路徑", Assert.Single(kit.Messages.Errors), StringComparison.Ordinal);
+        // Either refused as a network/device path, or (leading space) resolved as a missing file inside the project folder.
+        var msg = Assert.Single(kit.Messages.Errors);
+        Assert.True(msg.Contains("網路或裝置路徑", StringComparison.Ordinal) || msg.Contains("找不到", StringComparison.Ordinal), msg);
         Assert.Null(kit.Main.Workspace);
+    }
+
+    [Fact]
+    public void Referenced_paths_are_allowed_only_on_local_drives_or_inside_the_project_folder()
+    {
+        var projectDir = Path.GetTempPath();
+        Assert.True(PlanningWorkspace.IsAllowedReferencedPath(Path.Combine(projectDir, "city.geojson"), projectDir));
+        Assert.True(PlanningWorkspace.IsAllowedReferencedPath(Path.GetFullPath(SolomonTests.RepoFile("samples", "small", "city.geojson")), projectDir));
+        Assert.False(PlanningWorkspace.IsAllowedReferencedPath(@"\\evil-host\share\city.geojson", projectDir));
+        Assert.False(PlanningWorkspace.IsAllowedReferencedPath(@"\\?\UNC\evil-host\share\city.geojson", projectDir));
+        Assert.False(PlanningWorkspace.IsAllowedReferencedPath(@"\\.\pipe\x", projectDir));
+        // a project opened from a share may reference files next to it, but not elsewhere
+        Assert.True(PlanningWorkspace.IsAllowedReferencedPath(@"\\nas\team\day\city.geojson", @"\\nas\team\day"));
+        Assert.False(PlanningWorkspace.IsAllowedReferencedPath(@"\\nas\team\other\city.geojson", @"\\nas\team\day"));
     }
 
     [Fact]

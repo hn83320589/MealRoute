@@ -51,10 +51,10 @@ public sealed class PlanningWorkspace
         var ws = new PlanningWorkspace(project, path);
         if (project.Network is { } net)
         {
-            var netPath = IsNetworkOrDevicePath(net.Path) ? null : ws.ResolveNetworkPath(net.Path);
             var projectDir = Path.GetDirectoryName(Path.GetFullPath(path))!;
-            // Check the path exactly as it will be opened; a local project must not lead to a network location.
-            if (netPath is null || (IsNetworkOrDevicePath(netPath) && !IsNetworkOrDevicePath(projectDir)))
+            var netPath = ws.ResolveNetworkPath(net.Path);
+            // Allowlist on the exact path that will be opened.
+            if (!IsAllowedReferencedPath(netPath, projectDir))
                 throw new ProjectFileException($"專案參照的路網路徑「{net.Path}」是網路或裝置路徑，基於安全不會自動開啟。請確認來源後，以「匯入路網」手動選擇檔案。");
             if (!File.Exists(netPath)) throw new ProjectFileException($"找不到專案參照的路網檔：{netPath}");
             if (!string.Equals(ProjectSerializer.Sha256Of(netPath), net.Sha256, StringComparison.OrdinalIgnoreCase))
@@ -193,15 +193,24 @@ public sealed class PlanningWorkspace
         ProjectPath is null ? Path.GetFullPath(absolute) : Path.GetRelativePath(Path.GetDirectoryName(ProjectPath)!, absolute);
 
     /// <summary>
-    /// UNC (\\server\share), device (\\?\, \\.\) and forward-slash UNC paths. Opening one makes
-    /// Windows contact the remote host (and possibly send credentials), so a path that merely comes
-    /// from a project file is not followed automatically.
+    /// A file path that comes from a (possibly shared) project file is only followed when, fully
+    /// resolved, it is on a local drive letter (X:\, not a mapped network drive) or inside the
+    /// project's own folder. Everything else — UNC shares, \\?\, \\.\, \??\ device paths — would
+    /// make Windows contact another host and possibly send the user's credentials.
     /// </summary>
-    public static bool IsNetworkOrDevicePath(string path)
+    public static bool IsAllowedReferencedPath(string fullPath, string projectDirectory)
     {
-        var p = path.Trim().Replace('/', '\\');
-        if (p.StartsWith(@"\\", StringComparison.Ordinal)) return true;
-        return Uri.TryCreate(p, UriKind.Absolute, out var uri) && uri.IsUnc;
+        if (IsInside(fullPath, projectDirectory)) return true;
+        var root = Path.GetPathRoot(fullPath);
+        if (root is null || root.Length != 3 || !char.IsAsciiLetter(root[0]) || root[1] != ':' || root[2] != '\\') return false;
+        try { return new DriveInfo(root).DriveType is not (DriveType.Network or DriveType.NoRootDirectory); }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static bool IsInside(string fullPath, string directory)
+    {
+        var dir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(fullPath).StartsWith(dir, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool SamePath(string a, string b) =>
