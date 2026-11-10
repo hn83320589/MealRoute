@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MealRoute.App.Views.MapView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml">
+  <Grid>
+    <canvas:CanvasControl x:Name="Canvas" ClearColor="#FFF7F7F4"
+                          Draw="OnDraw" SizeChanged="OnSizeChanged"
+                          PointerPressed="OnPointerPressed" PointerMoved="OnPointerMoved"
+                          PointerReleased="OnPointerReleased" PointerWheelChanged="OnPointerWheelChanged"
+                          RightTapped="OnRightTapped" />
+    <Border x:Name="DragBadge" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top"
+            Margin="12" Padding="10,6" CornerRadius="6" Background="#EEFFFFFF" BorderThickness="1" BorderBrush="#33000000">
+      <StackPanel Spacing="2">
+        <TextBlock x:Name="DragMessage" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="420" />
+        <TextBlock x:Name="DragDelta" FontSize="12" Foreground="#FF555555" />
+        <TextBlock x:Name="DragHint" FontSize="11" Foreground="#FF888888" Text="放開以套用；按住 Shift 可強制套用不可行的移動；Esc 取消" />
+      </StackPanel>
+    </Border>
+    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12" Orientation="Horizontal" Spacing="6">
+      <Button Content="全部顯示" Click="OnFitAll" />
+    </StackPanel>
+  </Grid>
+</UserControl>

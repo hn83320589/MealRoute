@@ -3,9 +3,145 @@
     x:Class="MealRoute.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    xmlns:views="using:MealRoute.App.Views"
+    xmlns:vm="using:MealRoute.App.ViewModels"
     Title="MealRoute 社區送餐排班台">
-  <Grid>
-    <canvas:CanvasControl x:Name="MapCanvas" ClearColor="White" Draw="OnMapDraw" />
+  <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="6" />
+      <RowDefinition Height="230" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="*" />
+      <ColumnDefinition Width="380" />
+    </Grid.ColumnDefinitions>
+
+    <CommandBar Grid.ColumnSpan="2" DefaultLabelPosition="Right" IsOpen="False" HorizontalAlignment="Left">
+      <AppBarButton Icon="OpenFile" Label="開啟專案" Command="{x:Bind ViewModel.OpenProjectCommand}" />
+      <AppBarButton Icon="Save" Label="儲存" Command="{x:Bind ViewModel.SaveProjectCommand}" />
+      <AppBarButton Icon="SaveLocal" Label="另存" Command="{x:Bind ViewModel.SaveProjectAsCommand}" />
+      <AppBarSeparator />
+      <AppBarButton Icon="Map" Label="匯入路網" Command="{x:Bind ViewModel.ImportNetworkCommand}" />
+      <AppBarButton Icon="People" Label="匯入名單" Command="{x:Bind ViewModel.ImportStopsCommand}" />
+      <AppBarButton Label="匯入車輛" Command="{x:Bind ViewModel.ImportVehiclesCommand}">
+        <AppBarButton.Icon><FontIcon Glyph="&#xE804;" /></AppBarButton.Icon>
+      </AppBarButton>
+      <AppBarSeparator />
+      <AppBarButton Icon="Undo" Label="復原" Command="{x:Bind ViewModel.UndoCommand}" />
+      <AppBarButton Icon="Redo" Label="重做" Command="{x:Bind ViewModel.RedoCommand}" />
+      <AppBarButton Icon="Play" Label="最佳化" Command="{x:Bind ViewModel.Optimization.StartCommand}" />
+      <AppBarButton Icon="Stop" Label="取消" Command="{x:Bind ViewModel.Optimization.CancelCommand}" />
+      <AppBarButton Icon="Print" Label="列印路線單" Command="{x:Bind ViewModel.RouteSheets.PrintCommand}" />
+      <CommandBar.SecondaryCommands>
+        <AppBarButton Label="匯出路線 CSV" Command="{x:Bind ViewModel.RouteSheets.ExportCsvCommand}" />
+        <AppBarButton Label="匯出路線 GeoJSON" Command="{x:Bind ViewModel.RouteSheets.ExportGeoJsonCommand}" />
+        <AppBarButton Label="開啟 Solomon 基準實例（靜態模式）" Command="{x:Bind ViewModel.OpenSolomonCommand}" />
+      </CommandBar.SecondaryCommands>
+    </CommandBar>
+
+    <views:MapView x:Name="Map" Grid.Row="1" />
+    <Border Grid.Row="2" Background="#FFE5E5E5" />
+    <views:TimelineView x:Name="Timeline" Grid.Row="3" />
+
+    <Grid Grid.Row="1" Grid.RowSpan="3" Grid.Column="1" BorderThickness="1,0,0,0" BorderBrush="#22000000">
+      <TabView IsAddTabButtonVisible="False" TabWidthMode="SizeToContent" CanReorderTabs="False">
+        <TabViewItem Header="選取" IsClosable="False">
+          <ScrollViewer Padding="12">
+            <StackPanel Spacing="10">
+              <TextBlock Text="{x:Bind ViewModel.ObjectiveText, Mode=OneWay}" TextWrapping="Wrap" FontWeight="SemiBold" />
+              <TextBlock Text="{x:Bind ViewModel.SelectionText, Mode=OneWay}" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="鎖定/解鎖此站" Command="{x:Bind ViewModel.ToggleStopLockCommand}" />
+                <Button Content="鎖定/解鎖此路線" Command="{x:Bind ViewModel.ToggleRouteLockCommand}" />
+              </StackPanel>
+              <TextBlock FontSize="12" Foreground="#FF666666" TextWrapping="Wrap"
+                         Text="操作：滾輪縮放、拖曳空白處平移、點選站點聯動時間軸；把站點拖到其他路線的站旁（或時間軸上）即時檢查可行性，放開套用、Shift 強制；右鍵可鎖定。" />
+            </StackPanel>
+          </ScrollViewer>
+        </TabViewItem>
+        <TabViewItem Header="警告" IsClosable="False">
+          <ListView ItemsSource="{x:Bind ViewModel.Warnings}" SelectionMode="None">
+            <ListView.ItemTemplate>
+              <DataTemplate x:DataType="vm:WorkspaceWarning">
+                <TextBlock Text="{x:Bind Message}" TextWrapping="Wrap" Margin="0,4" FontSize="12" />
+              </DataTemplate>
+            </ListView.ItemTemplate>
+          </ListView>
+        </TabViewItem>
+        <TabViewItem Header="最佳化" IsClosable="False">
+          <StackPanel Padding="12" Spacing="10">
+            <NumberBox Header="時間上限（秒）" Value="{x:Bind ViewModel.Optimization.Seconds, Mode=TwoWay}" Minimum="1" SpinButtonPlacementMode="Inline" />
+            <NumberBox x:Name="RunsBox" Header="獨立搜尋次數" Value="4" Minimum="1" Maximum="16" SpinButtonPlacementMode="Inline" ValueChanged="OnRunsChanged" />
+            <NumberBox x:Name="SeedBox" Header="亂數種子" Value="1" Minimum="0" SpinButtonPlacementMode="Inline" ValueChanged="OnSeedChanged" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="開始最佳化" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.Optimization.StartCommand}" />
+              <Button Content="取消（保留最佳解）" Command="{x:Bind ViewModel.Optimization.CancelCommand}" />
+            </StackPanel>
+            <ProgressBar Maximum="1" Value="{x:Bind ViewModel.Optimization.Progress, Mode=OneWay}" />
+            <TextBlock Text="{x:Bind ViewModel.Optimization.Status, Mode=OneWay}" TextWrapping="Wrap" />
+          </StackPanel>
+        </TabViewItem>
+        <TabViewItem Header="重新排程" IsClosable="False">
+          <ScrollViewer Padding="12">
+            <StackPanel Spacing="8">
+              <Button Content="準備（以現在時刻）" Click="OnPrepareReschedule" />
+              <ComboBox Header="車輛" ItemsSource="{x:Bind ViewModel.Reschedule.Vehicles}" DisplayMemberPath="Label"
+                        SelectedIndex="{x:Bind ViewModel.Reschedule.SelectedVehicle, Mode=TwoWay}" HorizontalAlignment="Stretch" />
+              <TextBox x:Name="ReportTimeBox" Header="回報時刻（HH:mm）" LostFocus="OnReportTimeLostFocus" />
+              <TextBlock Text="已完成的站" FontWeight="SemiBold" />
+              <ItemsControl ItemsSource="{x:Bind ViewModel.Reschedule.Stops}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CompletedStopItem">
+                    <CheckBox Content="{x:Bind Label}" IsChecked="{x:Bind IsCompleted, Mode=TwoWay}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <ToggleButton x:Name="PickPositionButton" Content="在地圖上點選目前位置" Click="OnPickPosition" />
+              <NumberBox Header="延誤（分鐘）" Value="{x:Bind ViewModel.Reschedule.DelayMinutes, Mode=TwoWay}" Minimum="0" SpinButtonPlacementMode="Inline" />
+              <CheckBox Content="車輛故障（車上餐盒不轉運）" IsChecked="{x:Bind ViewModel.Reschedule.IsBrokenDown, Mode=TwoWay}" />
+              <Button Content="加入此車回報" Command="{x:Bind ViewModel.Reschedule.AddReportCommand}" />
+              <TextBlock x:Name="ReportsText" FontSize="12" TextWrapping="Wrap" Foreground="#FF555555" />
+              <NumberBox Header="重新排程時間上限（秒）" Value="{x:Bind ViewModel.Reschedule.Seconds, Mode=TwoWay}" Minimum="1" SpinButtonPlacementMode="Inline" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="重新排程" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.Reschedule.RunCommand}" />
+                <Button Content="取消" Command="{x:Bind ViewModel.Reschedule.CancelCommand}" />
+                <Button Content="套用" Command="{x:Bind ViewModel.Reschedule.ApplyCommand}" />
+              </StackPanel>
+              <ProgressBar Maximum="1" Value="{x:Bind ViewModel.Reschedule.Progress, Mode=OneWay}" />
+              <TextBlock Text="{x:Bind ViewModel.Reschedule.Summary, Mode=OneWay}" TextWrapping="Wrap" />
+            </StackPanel>
+          </ScrollViewer>
+        </TabViewItem>
+        <TabViewItem Header="路線單" IsClosable="False">
+          <Grid Padding="12" RowSpacing="8">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="列印" Command="{x:Bind ViewModel.RouteSheets.PrintCommand}" />
+              <Button Content="匯出 CSV" Command="{x:Bind ViewModel.RouteSheets.ExportCsvCommand}" />
+              <Button Content="匯出 GeoJSON" Command="{x:Bind ViewModel.RouteSheets.ExportGeoJsonCommand}" />
+            </StackPanel>
+            <ScrollViewer Grid.Row="1">
+              <TextBlock x:Name="SheetsText" FontFamily="Consolas, Microsoft JhengHei UI" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+            </ScrollViewer>
+          </Grid>
+        </TabViewItem>
+      </TabView>
+    </Grid>
+
+    <Grid Grid.Row="4" Grid.ColumnSpan="2" Padding="10,4" Background="#FFF0F0F0" ColumnSpacing="12">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="200" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+      <ProgressBar Grid.Column="1" Maximum="1" Value="{x:Bind ViewModel.BusyProgress, Mode=OneWay}" IsIndeterminate="False"
+                   Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}" VerticalAlignment="Center" />
+    </Grid>
   </Grid>
 </Window>

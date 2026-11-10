@@ -163,8 +163,14 @@ public sealed partial class MapViewModel : ObservableObject
 
     public void FitAll()
     {
-        var xs = Stops.Select(s => s.X).Concat(Depots.Select(d => d.X)).Concat(Roads.SelectMany(r => r.Xy.Where((_, i) => i % 2 == 0))).ToList();
-        var ys = Stops.Select(s => s.Y).Concat(Depots.Select(d => d.Y)).Concat(Roads.SelectMany(r => r.Xy.Where((_, i) => i % 2 == 1))).ToList();
+        // Fit the stops and depots (the planning area); fall back to the roads when there are none.
+        var xs = Stops.Select(s => s.X).Concat(Depots.Select(d => d.X)).ToList();
+        var ys = Stops.Select(s => s.Y).Concat(Depots.Select(d => d.Y)).ToList();
+        if (xs.Count == 0)
+        {
+            xs = Roads.SelectMany(r => r.Xy.Where((_, i) => i % 2 == 0)).ToList();
+            ys = Roads.SelectMany(r => r.Xy.Where((_, i) => i % 2 == 1)).ToList();
+        }
         if (xs.Count == 0) return;
         double minX = xs.Min(), maxX = xs.Max(), minY = ys.Min(), maxY = ys.Max();
         CenterX = (minX + maxX) / 2;
