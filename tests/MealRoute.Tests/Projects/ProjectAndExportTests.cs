@@ -164,6 +164,27 @@ public class ProjectAndExportTests : IDisposable
         AssertSameSolution(sol, RouteCsv.Read(RouteCsv.Write(inst, sol), inst));
     }
 
+    [Theory]
+    [InlineData("=HYPERLINK(\"http://x\")")]
+    [InlineData("+1+2")]
+    [InlineData("-cmd")]
+    [InlineData("@SUM(A1)")]
+    [InlineData("'=already quoted")]
+    public void Csv_neutralises_formula_like_text_and_still_round_trips(string text)
+    {
+        var inst = Instance(new[] { new Stop(text, text, new(0, 100), text, text, 1, 0, 0, 0, 86_400, true, 1) }, new[] { Vehicle(text) });
+        var sol = OptimizerTests.Optimize(inst).Solution;
+        var csv = RouteCsv.Write(inst, sol);
+        foreach (var line in csv.Split("\r\n").Skip(1).Where(l => l.Length > 0))
+            foreach (var cell in line.Split(','))
+            {
+                var c = cell.TrimStart('"');
+                Assert.False(c.Length > 0 && "=+@".Contains(c[0], StringComparison.Ordinal), $"unescaped formula cell: {cell}");
+                Assert.False(c.StartsWith('-') && !double.TryParse(c, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _), $"unescaped formula cell: {cell}");
+            }
+        AssertSameSolution(sol, RouteCsv.Read(csv, inst));
+    }
+
     [Fact]
     public void Csv_with_wrong_header_is_rejected()
     {

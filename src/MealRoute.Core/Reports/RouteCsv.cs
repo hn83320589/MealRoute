@@ -35,7 +35,7 @@ public static class RouteCsv
             {
                 var v = r.Visits[i];
                 var s = instance.Stops[v.Stop];
-                Row(sb, veh.Id, veh.DriverName, (i + 1).ToString(CultureInfo.InvariantCulture), s.Id, s.Name, s.Address, s.Note,
+                Row(sb, T(veh.Id), T(veh.DriverName), (i + 1).ToString(CultureInfo.InvariantCulture), T(s.Id), T(s.Name), T(s.Address), T(s.Note),
                     TimeOfDay.Format(v.Arrival), $"{TimeOfDay.Format(s.WindowStart)}-{TimeOfDay.Format(s.WindowEnd)}",
                     s.Meals.ToString(CultureInfo.InvariantCulture), s.Boxes.ToString(CultureInfo.InvariantCulture), v.BreakAfter ? "1" : "0",
                     N(v.Arrival), N(v.ServiceStart), N(v.Departure), N(r.Departure), N(r.EndArrival), "");
@@ -44,13 +44,25 @@ public static class RouteCsv
         foreach (var u in solution.Unserved)
         {
             var s = instance.Stops[u.Stop];
-            Row(sb, "", "", "", s.Id, s.Name, s.Address, s.Note, "", $"{TimeOfDay.Format(s.WindowStart)}-{TimeOfDay.Format(s.WindowEnd)}",
-                s.Meals.ToString(CultureInfo.InvariantCulture), s.Boxes.ToString(CultureInfo.InvariantCulture), "", "", "", "", "", "", u.Reason);
+            Row(sb, "", "", "", T(s.Id), T(s.Name), T(s.Address), T(s.Note), "", $"{TimeOfDay.Format(s.WindowStart)}-{TimeOfDay.Format(s.WindowEnd)}",
+                s.Meals.ToString(CultureInfo.InvariantCulture), s.Boxes.ToString(CultureInfo.InvariantCulture), "", "", "", "", "", "", T(u.Reason));
         }
         return sb.ToString();
     }
 
     private static readonly System.Buffers.SearchValues<char> NeedsQuoting = System.Buffers.SearchValues.Create(",\"\n\r");
+
+    private const string FormulaTriggers = "=+-@\t\r'";
+
+    /// <summary>
+    /// Text cells that a spreadsheet would treat as a formula (or that already start with the
+    /// escape quote) get a leading apostrophe; <see cref="Untext"/> removes it again on import.
+    /// </summary>
+    private static string T(string text) =>
+        text.Length > 0 && FormulaTriggers.Contains(text[0], StringComparison.Ordinal) ? "'" + text : text;
+
+    private static string Untext(string cell) =>
+        cell.Length > 1 && cell[0] == '\'' && FormulaTriggers.Contains(cell[1], StringComparison.Ordinal) ? cell[1..] : cell;
 
     private static void Row(StringBuilder sb, params string[] cells)
     {
@@ -82,13 +94,15 @@ public static class RouteCsv
         {
             var r = rows[line];
             if (r.Length != Header.Length) throw new FormatException($"CSV 第 {line + 1} 列欄位數為 {r.Length}，應為 {Header.Length}。");
-            if (!instance.StopIndex.TryGetValue(r[Col("stop_id")], out var stop)) throw new FormatException($"CSV 第 {line + 1} 列的站點「{r[Col("stop_id")]}」不在名單中。");
-            if (r[Col("vehicle_id")].Length == 0)
+            var stopId = Untext(r[Col("stop_id")]);
+            var vehicleId = Untext(r[Col("vehicle_id")]);
+            if (!instance.StopIndex.TryGetValue(stopId, out var stop)) throw new FormatException($"CSV 第 {line + 1} 列的站點「{stopId}」不在名單中。");
+            if (vehicleId.Length == 0)
             {
-                unserved.Add(new UnservedStop(stop, r[Col("unserved_reason")]));
+                unserved.Add(new UnservedStop(stop, Untext(r[Col("unserved_reason")])));
                 continue;
             }
-            if (!vehIndex.TryGetValue(r[Col("vehicle_id")], out var v)) throw new FormatException($"CSV 第 {line + 1} 列的車輛「{r[Col("vehicle_id")]}」不存在。");
+            if (!vehIndex.TryGetValue(vehicleId, out var v)) throw new FormatException($"CSV 第 {line + 1} 列的車輛「{vehicleId}」不存在。");
             visits[v].Add(new StopVisit(stop, D(r[Col("arrival_s")]), D(r[Col("service_start_s")]), D(r[Col("departure_s")]), r[Col("break_after")] == "1"));
             departure[v] = D(r[Col("route_departure_s")]);
             end[v] = D(r[Col("route_end_s")]);
