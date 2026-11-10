@@ -179,3 +179,28 @@ public class RouteEvaluatorPropertyTests
         return best;
     }
 }
+
+public class RouteCostPropertyTests
+{
+    [Fact]
+    public void Property_fast_cost_path_agrees_with_full_evaluation()
+    {
+        Property.ForAll(44_000, 600, (r, _) =>
+        {
+            var inst = RouteEvaluatorPropertyTests.RandomStaticInstance(r, r.Next(1, 9), 1, scale: r.NextDouble() < 0.5 ? 3_000 : 8_000);
+            var evaluator = new RouteEvaluator(inst, TestInstances.Oracle(inst));
+            var route = Enumerable.Range(0, inst.Stops.Count).OrderBy(_ => r.Next()).Take(r.Next(1, inst.Stops.Count + 1)).ToArray();
+            var full = evaluator.Evaluate(0, route);
+            var deps = new double[route.Length];
+            var fast = evaluator.EvaluateCost(0, route, deps);
+
+            Assert.Equal(full.IsFeasible, fast.Feasible);
+            if (!full.IsFeasible) return;
+            Assert.Equal(full.Departure, fast.Departure);
+            Assert.Equal(full.EndArrival, fast.End);
+            Assert.Equal(full.TravelSeconds, fast.Travel, 9);
+            Assert.Equal(full.DistanceM, fast.Distance, 9);
+            Assert.Equal(full.Visits.Select(v => v.Departure), deps);
+        });
+    }
+}

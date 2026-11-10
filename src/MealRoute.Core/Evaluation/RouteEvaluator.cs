@@ -92,6 +92,75 @@ public sealed class RouteEvaluator
         return Build(vehicle, route, diag, meals, boxes, first);
     }
 
+    /// <summary>
+    /// Same verdict and costs as <see cref="Evaluate"/> without building visits or diagnostics.
+    /// Allocation-free unless the driving limit forces a break search. Optionally writes each
+    /// stop's departure time into <paramref name="departures"/> (length ≥ route length).
+    /// </summary>
+    public RouteCost EvaluateCost(int vehicle, ReadOnlySpan<int> route, Span<double> departures = default)
+    {
+        if (route.IsEmpty) return RouteCost.Empty;
+        var veh = _inst.Vehicles[vehicle];
+        int meals = 0, boxes = 0;
+        foreach (var s in route) { meals += _inst.Stops[s].Meals; boxes += _inst.Stops[s].Boxes; }
+        if (meals > veh.MealCapacity || boxes > veh.BoxCapacity) return RouteCost.Infeasible;
+
+        var d0 = veh.EarliestStart;
+        var dStar = DelayedDeparture(vehicle, route[0], d0);
+        var tried = 0;
+        for (var d = dStar; tried < 2; d = d0, tried++)
+        {
+            if (tried == 1 && dStar == d0) break;
+            var status = ForwardNoBreak(vehicle, route, d, departures, out var cost);
+            if (status == ForwardStatus.Feasible) return cost;
+            if (status == ForwardStatus.DrivingLimit)
+            {
+                var arr = route.ToArray();
+                var breaks = SearchBreaks(vehicle, arr, d);
+                if (breaks is not null)
+                {
+                    var sim = Simulate(vehicle, arr, d, breaks, diagnostic: false);
+                    if (!departures.IsEmpty)
+                        for (var i = 0; i < arr.Length; i++) departures[i] = sim.Visits[i].Departure;
+                    return new RouteCost(true, sim.Departure, sim.End, sim.Travel, sim.Distance);
+                }
+            }
+        }
+        return RouteCost.Infeasible;
+    }
+
+    private enum ForwardStatus { Feasible, Infeasible, DrivingLimit }
+
+    private ForwardStatus ForwardNoBreak(int vehicle, ReadOnlySpan<int> route, double d, Span<double> departures, out RouteCost cost)
+    {
+        cost = RouteCost.Infeasible;
+        var veh = _inst.Vehicles[vehicle];
+        var limit = _inst.Breaks.MaxDrivingSeconds;
+        var n = route.Length;
+        double cur = d, drive = 0, distance = 0;
+        var from = _inst.VehicleStartLocation(vehicle);
+        for (var j = 0; j <= n; j++)
+        {
+            var to = j == n ? _inst.VehicleEndLocation(vehicle) : _inst.StopLocation(route[j]);
+            var leg = _oracle.Leg(from, to, cur);
+            if (double.IsInfinity(leg.Arrival)) return ForwardStatus.Infeasible;
+            drive += leg.Arrival - cur;
+            if (drive > limit) return ForwardStatus.DrivingLimit;
+            distance += leg.DistanceM;
+            cur = leg.Arrival;
+            if (j == n) break;
+            var stop = _inst.Stops[route[j]];
+            if (cur < stop.WindowStart) cur = stop.WindowStart;
+            if (cur > stop.WindowEnd) return ForwardStatus.Infeasible;
+            cur += stop.ServiceSeconds;
+            if (!departures.IsEmpty) departures[j] = cur;
+            from = to;
+        }
+        if (cur > veh.LatestEnd || cur - d > veh.MaxWorkSeconds) return ForwardStatus.Infeasible;
+        cost = new RouteCost(true, d, cur, drive, distance);
+        return ForwardStatus.Feasible;
+    }
+
     private RouteEvaluation Build(int vehicle, int[] route, SimResult sim, int meals, int boxes, Violation? violation) => new()
     {
         Vehicle = vehicle,
@@ -199,7 +268,9 @@ public sealed class RouteEvaluator
                 if (j == n)
                 {
                     if (arr > veh.LatestEnd || arr - d > veh.MaxWorkSeconds) return;
-                    if (curTravel < bestTravel || (curTravel == bestTravel && arr < bestEnd))
+                    // Travel sums of different placements differ by float noise only when they are
+                    // "equal", so compare with a tolerance and let the earlier return decide.
+                    if (curTravel < bestTravel - 1e-9 || (Math.Abs(curTravel - bestTravel) <= 1e-9 && arr < bestEnd))
                     {
                         bestTravel = curTravel;
                         bestEnd = arr;

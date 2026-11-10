@@ -22,9 +22,13 @@ public readonly record struct ObjectiveValue(
         if (c != 0) return c;
         c = VehiclesUsed.CompareTo(other.VehiclesUsed);
         if (c != 0) return c;
-        c = TravelSeconds.CompareTo(other.TravelSeconds);
+        // Travel sums of equivalent solutions differ by floating-point noise (different summation
+        // order); compare on a microsecond grid so the work-time tier can decide real ties.
+        c = Quantize(TravelSeconds).CompareTo(Quantize(other.TravelSeconds));
         return c != 0 ? c : WorkSeconds.CompareTo(other.WorkSeconds);
     }
+
+    private static double Quantize(double seconds) => Math.Round(seconds * 1e6);
 
     public static bool operator <(ObjectiveValue a, ObjectiveValue b) => a.CompareTo(b) < 0;
     public static bool operator >(ObjectiveValue a, ObjectiveValue b) => a.CompareTo(b) > 0;
