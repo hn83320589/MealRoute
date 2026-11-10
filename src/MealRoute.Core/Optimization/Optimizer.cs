@@ -55,6 +55,9 @@ public sealed class Optimizer
 
         var tracker = new ProgressTracker(progress, options, time, startStamp);
         var start = InitialState(initial);
+        RepairInfeasibleRoutes(start, frozen, locked);
+        // Routes still infeasible (violation inside a locked/frozen part) are kept as the user fixed them.
+        for (var v = 0; v < V; v++) if (!start.Costs[v].Feasible) locked[v] = true;
         var constructor = new AlnsRun(_inst, _search, new Rng(options.Seed), frozen, locked, _canServe, related, ShouldStop, _ => { });
         constructor.Construct(start);
         tracker.Best(start.Objective(_inst));
@@ -110,6 +113,32 @@ public sealed class Optimizer
         for (var stop = 0; stop < _inst.Stops.Count; stop++)
             if (!assigned[stop]) s.Unassigned.Add(stop);
         return s;
+    }
+
+    /// <summary>
+    /// An initial route may be infeasible (a delay report, a forced manual edit). The search only
+    /// works on feasible routes, so stops are taken out (at the first violation, else the last
+    /// free one) until the route is feasible; they become unassigned and may be re-inserted.
+    /// Locked routes and frozen prefixes are left as the user fixed them.
+    /// </summary>
+    private void RepairInfeasibleRoutes(SearchState s, int[] frozen, bool[] locked)
+    {
+        for (var v = 0; v < s.Routes.Length; v++)
+        {
+            if (locked[v]) continue;
+            var route = s.Routes[v];
+            while (!s.Costs[v].Feasible && route.Count > frozen[v])
+            {
+                var eval = _search.Evaluate(v, route);
+                var at = eval.FirstViolation is { Stop: >= 0 } fv ? route.IndexOf(fv.Stop) : -1;
+                if (at < frozen[v]) at = route.Count - 1;
+                s.AddUnassigned(route[at]);
+                route.RemoveAt(at);
+                var deps = new double[route.Count];
+                s.Costs[v] = _search.EvaluateCost(v, route.ToArray(), deps);
+                s.Departures[v] = deps;
+            }
+        }
     }
 
     /// <summary>Shaw relatedness: normalised travel time at mid-horizon plus window-start difference.</summary>

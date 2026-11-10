@@ -137,7 +137,8 @@ public sealed class RouteEvaluator
         var veh = _inst.Vehicles[vehicle];
         var limit = _inst.Breaks.MaxDrivingSeconds;
         var n = route.Length;
-        double cur = d, drive = 0, distance = 0;
+        double cur = d, drive = veh.InitialDrivingSeconds, distance = 0;
+        var workStart = veh.WorkStartedAt ?? d;
         var from = _inst.VehicleStartLocation(vehicle);
         for (var j = 0; j <= n; j++)
         {
@@ -156,8 +157,8 @@ public sealed class RouteEvaluator
             if (!departures.IsEmpty) departures[j] = cur;
             from = to;
         }
-        if (cur > veh.LatestEnd || cur - d > veh.MaxWorkSeconds) return ForwardStatus.Infeasible;
-        cost = new RouteCost(true, d, cur, drive, distance);
+        if (cur > veh.LatestEnd || cur - workStart > veh.MaxWorkSeconds) return ForwardStatus.Infeasible;
+        cost = new RouteCost(true, d, cur, drive - veh.InitialDrivingSeconds, distance);
         return ForwardStatus.Feasible;
     }
 
@@ -184,7 +185,7 @@ public sealed class RouteEvaluator
         var to = _inst.StopLocation(firstStop);
         var a = _inst.Stops[firstStop].WindowStart;
         var arr0 = _oracle.ArrivalTime(from, to, d0);
-        if (double.IsInfinity(arr0) || arr0 >= a) return d0;
+        if (double.IsInfinity(arr0) || arr0 >= a || _inst.Vehicles[vehicle].FixedDeparture) return d0;
 
         // Fixed-point iteration d <- d + (a - arr(d)); keep the latest d with arr(d) <= a (FIFO).
         // On overshoot step back by the overshoot (handles 1-ulp rounding), bisect only if that stalls.
@@ -267,7 +268,7 @@ public sealed class RouteEvaluator
                 cur = arr;
                 if (j == n)
                 {
-                    if (arr > veh.LatestEnd || arr - d > veh.MaxWorkSeconds) return;
+                    if (arr > veh.LatestEnd || arr - (veh.WorkStartedAt ?? d) > veh.MaxWorkSeconds) return;
                     // Travel sums of different placements differ by float noise only when they are
                     // "equal", so compare with a tolerance and let the earlier return decide.
                     if (curTravel < bestTravel - 1e-9 || (Math.Abs(curTravel - bestTravel) <= 1e-9 && arr < bestEnd))
@@ -288,7 +289,7 @@ public sealed class RouteEvaluator
             }
         }
 
-        Recurse(-1, d, 0, 0);
+        Recurse(-1, d, veh.InitialDrivingSeconds, 0);
         return best;
     }
 
@@ -306,7 +307,8 @@ public sealed class RouteEvaluator
         var visits = new StopVisit[n];
         var takenBreak = new bool[n];
         var cur = d;
-        double drive = 0;
+        double drive = veh.InitialDrivingSeconds;
+        var workStart = veh.WorkStartedAt ?? d;
 
         void Report(ViolationKind kind, int stop, double time, string message)
         {
@@ -358,8 +360,8 @@ public sealed class RouteEvaluator
                 res.End = cur;
                 if (cur > veh.LatestEnd)
                     Report(ViolationKind.LatestReturn, -1, cur, $"{TimeOfDay.Format(cur)} 回到據點，晚於 {TimeOfDay.Format(veh.LatestEnd)}");
-                if (cur - d > veh.MaxWorkSeconds)
-                    Report(ViolationKind.MaxWork, -1, cur, $"工時 {TimeOfDay.FormatDuration(cur - d)} 超過上限 {TimeOfDay.FormatDuration(veh.MaxWorkSeconds)}");
+                if (cur - workStart > veh.MaxWorkSeconds)
+                    Report(ViolationKind.MaxWork, -1, cur, $"工時 {TimeOfDay.FormatDuration(cur - workStart)} 超過上限 {TimeOfDay.FormatDuration(veh.MaxWorkSeconds)}");
                 break;
             }
 

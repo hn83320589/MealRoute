@@ -71,7 +71,9 @@ internal static class RefFeasibilityChecker
         if (meals > veh.MealCapacity) rep.Errors.Add($"{tag}: meals {meals} > {veh.MealCapacity}");
         if (boxes > veh.BoxCapacity) rep.Errors.Add($"{tag}: boxes {boxes} > {veh.BoxCapacity}");
 
-        double t = r.Departure, drive = 0, travel = 0;
+        double t = r.Departure, drive = veh.InitialDrivingSeconds, travel = 0;
+        var workStart = veh.WorkStartedAt ?? r.Departure;
+        if (veh.FixedDeparture && Math.Abs(r.Departure - veh.EarliestStart) > 1e-6) rep.Errors.Add($"{tag}: fixed departure {veh.EarliestStart} but departs {r.Departure}");
         var loc = startLoc;
         for (var i = 0; i < r.Stops.Count; i++)
         {
@@ -102,7 +104,7 @@ internal static class RefFeasibilityChecker
         travel += end - t;
         if (drive > inst.Breaks.MaxDrivingSeconds + 1e-6) rep.Errors.Add($"{tag}: driving {drive:F1}s without break before returning");
         if (end > veh.LatestEnd + 1e-6) rep.Errors.Add($"{tag}: returns {end:F1} after {veh.LatestEnd}");
-        if (end - r.Departure > veh.MaxWorkSeconds + 1e-6) rep.Errors.Add($"{tag}: work {end - r.Departure:F1}s > {veh.MaxWorkSeconds}");
+        if (end - workStart > veh.MaxWorkSeconds + 1e-6) rep.Errors.Add($"{tag}: work {end - workStart:F1}s > {veh.MaxWorkSeconds}");
         Deviation(rep, tag, "end", r.EndArrival, end, tol);
         rep.TotalTravel += travel;
         rep.TotalWork += end - r.Departure;

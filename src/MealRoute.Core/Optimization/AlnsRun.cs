@@ -129,7 +129,7 @@ internal sealed class AlnsRun
             Repair(cand, r);
 
             double score = 0;
-            if (cand.AllRoutesFeasible())
+            if (AllFeasible(cand))
             {
                 var candObj = cand.Objective(_inst);
                 if (candObj < bestObj)
@@ -168,6 +168,14 @@ internal sealed class AlnsRun
     /// the search can pass through states that temporarily drop a stop or add a vehicle. The best
     /// solution is still tracked with the exact lexicographic objective.
     /// </summary>
+    /// <summary>Every route the search may change is feasible (locked routes are kept as they are).</summary>
+    private bool AllFeasible(SearchState s)
+    {
+        for (var v = 0; v < s.Routes.Length; v++)
+            if (!_locked[v] && !s.Costs[v].Feasible) return false;
+        return true;
+    }
+
     private bool Accept(ObjectiveValue cand, ObjectiveValue cur, double temperature, bool ignoreVehicleTier)
     {
         var delta = Scalar(cand, ignoreVehicleTier) - Scalar(cur, ignoreVehicleTier);

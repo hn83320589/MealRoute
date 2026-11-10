@@ -24,6 +24,9 @@ public sealed record Stop(
 /// <param name="EarliestStart">Earliest departure from the start depot.</param>
 /// <param name="LatestEnd">Latest arrival at the end depot.</param>
 /// <param name="MaxWorkSeconds">Departure to return, including waiting, service and breaks.</param>
+/// <param name="InitialDrivingSeconds">Driving already accumulated since the last break (vehicle already en route).</param>
+/// <param name="WorkStartedAt">When the working day started, if earlier than this route's departure (en route); used for the work-time limit.</param>
+/// <param name="FixedDeparture">Depart exactly at <paramref name="EarliestStart"/> (no departure delay), e.g. a vehicle resuming en route.</param>
 public sealed record Vehicle(
     string Id,
     string DriverName,
@@ -33,7 +36,10 @@ public sealed record Vehicle(
     double LatestEnd,
     int MealCapacity,
     int BoxCapacity,
-    double MaxWorkSeconds);
+    double MaxWorkSeconds,
+    double InitialDrivingSeconds = 0,
+    double? WorkStartedAt = null,
+    bool FixedDeparture = false);
 
 /// <summary>Driver break rule: before accumulated driving exceeds the limit, rest at a stop after service.</summary>
 public sealed record BreakRule(double MaxDrivingSeconds, double BreakSeconds)
