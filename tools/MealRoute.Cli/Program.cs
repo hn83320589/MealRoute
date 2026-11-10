@@ -20,10 +20,12 @@ internal static class Program
             return args[0] switch
             {
                 "solomon" => SolomonCommand.Run(options),
+                "generate" => SampleCommands.Generate(options),
+                "solve" => SampleCommands.Solve(options),
                 _ => Unknown(args[0]),
             };
         }
-        catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
+        catch (Exception ex) when (ex is ArgumentException or FormatException or IOException or Core.Projects.ProjectFileException)
         {
             Console.Error.WriteLine($"錯誤：{ex.Message}");
             return 2;
@@ -42,6 +44,10 @@ internal static class Program
         Console.WriteLine("""
             MealRoute CLI
 
+              generate  Generate a synthetic city + roster project
+                        --size small|medium|large   --out <dir>   --seed <n>
+              solve     Import a project, build the travel model, optimise and print metrics
+                        --project <file>  --seconds <n> (default 60)  --iterations <n>  --runs <n>  --save
               solomon   Run Solomon VRPTW benchmarks (static mode) and compare with best known solutions
                         --dir <path>        instance folder (default benchmarks/solomon)
                         --only <prefix>     e.g. c1, r1, rc1, r101 (default: all *.txt)
