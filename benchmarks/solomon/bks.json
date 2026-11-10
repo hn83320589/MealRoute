@@ -1,0 +1,13 @@
+{
+  "source": "SINTEF TOP, Solomon benchmark, 100 customers: https://www.sintef.no/projectweb/top/vrptw/100-customers/ (retrieved 2026-11-10)",
+  "convention": "Hierarchical objective: 1) vehicles, 2) total distance. Distance and time in double precision (no rounding/truncation of distances); total distance rounded to two decimals. r111 is marked with a distance note on the source page.",
+  "instances": {
+    "c101": [10, 828.94], "c102": [10, 828.94], "c103": [10, 828.06], "c104": [10, 824.78], "c105": [10, 828.94],
+    "c106": [10, 828.94], "c107": [10, 828.94], "c108": [10, 828.94], "c109": [10, 828.94],
+    "r101": [19, 1650.80], "r102": [17, 1486.12], "r103": [13, 1292.68], "r104": [9, 1007.31], "r105": [14, 1377.11],
+    "r106": [12, 1252.03], "r107": [10, 1104.66], "r108": [9, 960.88], "r109": [11, 1194.73], "r110": [10, 1118.84],
+    "r111": [10, 1096.73], "r112": [9, 982.14],
+    "rc101": [14, 1696.95], "rc102": [12, 1554.75], "rc103": [11, 1261.67], "rc104": [10, 1135.48], "rc105": [13, 1629.44],
+    "rc106": [11, 1424.73], "rc107": [11, 1230.48], "rc108": [10, 1139.82]
+  }
+}
