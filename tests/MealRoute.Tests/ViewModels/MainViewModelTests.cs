@@ -57,6 +57,9 @@ public class MainViewModelTests
     [InlineData(@"\\evil-host\share\city.geojson")]
     [InlineData(@"\\?\C:\city.geojson")]
     [InlineData("//evil-host/share/city.geojson")]
+    [InlineData(@"\/evil-host/share/city.geojson")]
+    [InlineData(@"/\evil-host\share\city.geojson")]
+    [InlineData(@" \\evil-host\share\city.geojson")]
     public async Task Project_referencing_a_network_share_path_is_not_followed(string networkPath)
     {
         using var kit = new ViewModelTestKit();
