@@ -52,17 +52,8 @@ public static class RouteCsv
 
     private static readonly System.Buffers.SearchValues<char> NeedsQuoting = System.Buffers.SearchValues.Create(",\"\n\r");
 
-    private const string FormulaTriggers = "=+-@\t\r'";
-
-    /// <summary>
-    /// Text cells that a spreadsheet would treat as a formula (or that already start with the
-    /// escape quote) get a leading apostrophe; <see cref="Untext"/> removes it again on import.
-    /// </summary>
-    private static string T(string text) =>
-        text.Length > 0 && FormulaTriggers.Contains(text[0], StringComparison.Ordinal) ? "'" + text : text;
-
-    private static string Untext(string cell) =>
-        cell.Length > 1 && cell[0] == '\'' && FormulaTriggers.Contains(cell[1], StringComparison.Ordinal) ? cell[1..] : cell;
+    private static string T(string text) => CsvText.Escape(text);
+    private static string Untext(string cell) => CsvText.Unescape(cell);
 
     private static void Row(StringBuilder sb, params string[] cells)
     {

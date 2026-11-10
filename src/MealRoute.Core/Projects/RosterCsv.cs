@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using MealRoute.Core.Geo;
 using MealRoute.Core.Model;
+using MealRoute.Core.Reports;
 
 namespace MealRoute.Core.Projects;
 
@@ -31,7 +32,7 @@ public static class RosterCsv
             var start = Time(r[9], line, "window_start");
             var end = Time(r[10], line, "window_end");
             if (end < start) throw new FormatException($"站點名單第 {line} 行：時間窗結束早於開始。");
-            result.Add(new Stop(r[0], r[1], new GeoPoint(Num(r[2], line, "lat"), Num(r[3], line, "lon")), r[4], r[5],
+            result.Add(new Stop(U(r[0]), U(r[1]), new GeoPoint(Num(r[2], line, "lat"), Num(r[3], line, "lon")), U(r[4]), U(r[5]),
                 Int(r[6], line, "meals"), Int(r[7], line, "boxes"), Num(r[8], line, "service_min") * 60, start, end,
                 Bool(r[11], line, "mandatory"), priority));
         }
@@ -46,7 +47,7 @@ public static class RosterCsv
         return rows.Select((r, i) =>
         {
             var line = i + 2;
-            return new Vehicle(r[0], r[1], new GeoPoint(Num(r[2], line, "start_lat"), Num(r[3], line, "start_lon")),
+            return new Vehicle(U(r[0]), U(r[1]), new GeoPoint(Num(r[2], line, "start_lat"), Num(r[3], line, "start_lon")),
                 new GeoPoint(Num(r[4], line, "end_lat"), Num(r[5], line, "end_lon")),
                 Time(r[6], line, "earliest_start"), Time(r[7], line, "latest_end"),
                 Int(r[8], line, "meal_capacity"), Int(r[9], line, "box_capacity"), Num(r[10], line, "max_work_hours") * 3600);
@@ -83,7 +84,14 @@ public static class RosterCsv
 
     private static readonly System.Buffers.SearchValues<char> NeedsQuoting = System.Buffers.SearchValues.Create(",\"\n\r");
 
-    private static string Q(string s) => s.AsSpan().IndexOfAny(NeedsQuoting) >= 0 ? "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"" : s;
+    /// <summary>Quoted, spreadsheet-safe text cell (see <see cref="CsvText"/>).</summary>
+    private static string Q(string text)
+    {
+        var s = CsvText.Escape(text);
+        return s.AsSpan().IndexOfAny(NeedsQuoting) >= 0 ? "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"" : s;
+    }
+
+    private static string U(string cell) => CsvText.Unescape(cell);
 
     private static List<string[]> Rows(string csv, string[] header, string what)
     {

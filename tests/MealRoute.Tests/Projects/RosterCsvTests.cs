@@ -40,6 +40,22 @@ public class RosterCsvTests
         Assert.Equal(11 * 3600 + 30, stops[1].WindowStart);
     }
 
+    [Fact]
+    public void Formula_like_text_is_neutralised_on_export_and_restored_on_import()
+    {
+        var project = ProjectSerializer.Load(SolomonTests.RepoFile("samples", "small", "project.mealroute.json"));
+        var stops = project.Stops.Take(3).Select((s, i) => s with { Name = new[] { "=1+2", "@SUM(A1)", "-x" }[i], Note = "+cmd" }).ToArray();
+        var csv = RosterCsv.WriteStops(stops);
+        foreach (var line in csv.Split('\n').Skip(1).Where(l => l.Length > 0))
+            Assert.DoesNotContain(line.Split(',').Skip(1).Take(1), c => c.Length > 0 && "=+-@".Contains(c.TrimStart('"')[0], StringComparison.Ordinal));
+        var back = RosterCsv.ReadStops(csv);
+        Assert.Equal(stops.Select(s => s.Name), back.Select(s => s.Name));
+        Assert.Equal(stops.Select(s => s.Note), back.Select(s => s.Note));
+        var vehicles = project.Vehicles.Select(v => v with { DriverName = "=HYPERLINK(1)" }).ToArray();
+        Assert.Equal(vehicles, RosterCsv.ReadVehicles(RosterCsv.WriteVehicles(vehicles)));
+        Assert.Contains("'=HYPERLINK", RosterCsv.WriteVehicles(vehicles), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("id,name\r\nA,B\r\n", "標頭")]
     [InlineData("id,name,lat,lon,address,note,meals,boxes,service_min,window_start,window_end,mandatory,priority\r\nA,B,x,1,,,1,0,2,11:00,12:00,1,3\r\n", "lat")]

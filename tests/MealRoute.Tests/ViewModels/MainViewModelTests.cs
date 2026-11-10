@@ -3,6 +3,7 @@ using System.Diagnostics;
 using MealRoute.App.ViewModels;
 using MealRoute.App.ViewModels.Services;
 using MealRoute.Core.Geo;
+using MealRoute.Core.Projects;
 using MealRoute.Core.Reports;
 using MealRoute.Tests.Benchmark;
 using MealRoute.Tests.Projects;
@@ -50,6 +51,21 @@ public class MainViewModelTests
         await File.WriteAllTextAsync(path, "{\"schemaVersion\": 99}");
         await kit.Main.OpenProjectFromPathAsync(path);
         Assert.Contains("較新版本", Assert.Single(kit.Messages.Errors), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(@"\\evil-host\share\city.geojson")]
+    [InlineData(@"\\?\C:\city.geojson")]
+    [InlineData("//evil-host/share/city.geojson")]
+    public async Task Project_referencing_a_network_share_path_is_not_followed(string networkPath)
+    {
+        using var kit = new ViewModelTestKit();
+        var project = ProjectSerializer.Load(SolomonTests.RepoFile("samples", "small", "project.mealroute.json"));
+        var path = Path.Combine(kit.Dir, "shared.json");
+        ProjectSerializer.Save(project with { Network = new NetworkReference(networkPath, "00") }, path);
+        await kit.Main.OpenProjectFromPathAsync(path);
+        Assert.Contains("網路或裝置路徑", Assert.Single(kit.Messages.Errors), StringComparison.Ordinal);
+        Assert.Null(kit.Main.Workspace);
     }
 
     [Fact]

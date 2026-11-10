@@ -51,6 +51,8 @@ public sealed class PlanningWorkspace
         var ws = new PlanningWorkspace(project, path);
         if (project.Network is { } net)
         {
+            if (IsNetworkOrDevicePath(net.Path))
+                throw new ProjectFileException($"專案參照的路網路徑「{net.Path}」是網路或裝置路徑，基於安全不會自動開啟。請確認來源後，以「匯入路網」手動選擇檔案。");
             var netPath = ws.ResolveNetworkPath(net.Path);
             if (!File.Exists(netPath)) throw new ProjectFileException($"找不到專案參照的路網檔：{netPath}");
             if (!string.Equals(ProjectSerializer.Sha256Of(netPath), net.Sha256, StringComparison.OrdinalIgnoreCase))
@@ -187,6 +189,14 @@ public sealed class PlanningWorkspace
 
     private string RelativeToProject(string absolute) =>
         ProjectPath is null ? Path.GetFullPath(absolute) : Path.GetRelativePath(Path.GetDirectoryName(ProjectPath)!, absolute);
+
+    /// <summary>
+    /// UNC (\\server\share), device (\\?\, \\.\) and forward-slash UNC paths. Opening one makes
+    /// Windows contact the remote host (and possibly send credentials), so a path that merely comes
+    /// from a project file is not followed automatically.
+    /// </summary>
+    public static bool IsNetworkOrDevicePath(string path) =>
+        path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal);
 
     private static bool SamePath(string a, string b) =>
         string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
