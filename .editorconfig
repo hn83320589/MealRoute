@@ -22,3 +22,5 @@ dotnet_diagnostic.CA1310.severity = suggestion
 dotnet_diagnostic.CA1716.severity = none
 dotnet_diagnostic.CA1062.severity = none
 dotnet_diagnostic.CA1515.severity = none
+# Instance members kept for API symmetry are fine
+dotnet_diagnostic.CA1822.severity = suggestion
