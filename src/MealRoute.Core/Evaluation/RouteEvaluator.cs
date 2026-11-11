@@ -38,7 +38,8 @@ public sealed class RouteEvaluation
 /// both stop counting as work. Arrival times only move later with a later departure (FIFO), so the
 /// earliest start decides time-window feasibility and the latest return; the delay only shortens
 /// work time, which is why it matters for the work-time limit. With time-dependent travel the
-/// delay is refined by a few fixed-point steps, never accepting one that breaks the schedule.</item>
+/// delay is refined by a few fixed-point steps, never accepting one that breaks the schedule, and a
+/// delay that adds travel (heavier traffic) is only taken when the work-time limit needs it.</item>
 /// <item>Breaks: considered only where accumulated driving would otherwise exceed the limit; every
 /// allowed stop up to that point is tried (recursively for further breaks) and the feasible
 /// schedule with least travel time, then least work time, then earliest return, is kept.</item>
@@ -147,28 +148,55 @@ public sealed class RouteEvaluator
 
     /// <summary>
     /// Simulates from the earliest start, then leaves later by the waiting the schedule can absorb
-    /// (see the class remarks). Feasibility here excludes the work-time limit.
+    /// (see the class remarks). Every schedule tried (the earliest start, each delay step, and the
+    /// departure with no wait at the first stop) is a candidate; the chosen one meets the work-time
+    /// limit if any does, then has the least travel, then the least work, the objective's order.
+    /// With static travel all candidates travel equally, so the most delayed one wins; with
+    /// time-dependent travel a delay into heavier traffic is not taken just to shorten work.
+    /// Feasibility here excludes the work-time limit.
     /// </summary>
     private ForwardStatus Settle(int vehicle, ReadOnlySpan<int> route, bool[]? breaks, out RouteCost cost)
     {
         var veh = _inst.Vehicles[vehicle];
-        var status = Forward(vehicle, route, veh.EarliestStart, breaks, default, out cost, out var step);
+        var status = Forward(vehicle, route, veh.EarliestStart, breaks, default, out var walk, out var step);
+        cost = walk;
         if (status != ForwardStatus.Feasible || veh.FixedDeparture) return status;
 
         for (var i = 0; i < 12 && step > SettleTolerance; i++)
         {
-            if (Forward(vehicle, route, cost.Departure + step, breaks, default, out var later, out var more) == ForwardStatus.Feasible
-                && later.Work < cost.Work)
+            if (Forward(vehicle, route, walk.Departure + step, breaks, default, out var later, out var more) == ForwardStatus.Feasible
+                && later.Work < walk.Work)
             {
-                cost = later;
+                walk = later;
                 step = more;
+                if (Preferred(veh, later, cost)) cost = later;
             }
             else
             {
                 step /= 2; // time-dependent travel moved a window or the return; try a smaller delay
             }
         }
+
+        var noFirstWait = DelayedDeparture(vehicle, route[0], veh.EarliestStart);
+        if (noFirstWait != veh.EarliestStart && noFirstWait != walk.Departure
+            && Forward(vehicle, route, noFirstWait, breaks, default, out var alt, out _) == ForwardStatus.Feasible
+            && Preferred(veh, alt, cost))
+        {
+            cost = alt;
+        }
         return status;
+    }
+
+    /// <summary>Within the work-time limit first, then less travel (microsecond grid, as the objective), then less work.</summary>
+    private static bool Preferred(Vehicle veh, RouteCost a, RouteCost b)
+    {
+        bool okA = a.End - (veh.WorkStartedAt ?? a.Departure) <= veh.MaxWorkSeconds;
+        bool okB = b.End - (veh.WorkStartedAt ?? b.Departure) <= veh.MaxWorkSeconds;
+        if (okA != okB) return okA;
+        var ta = Math.Round(a.Travel * 1e6);
+        var tb = Math.Round(b.Travel * 1e6);
+        if (ta != tb) return ta < tb;
+        return a.Work < b.Work;
     }
 
     /// <summary>

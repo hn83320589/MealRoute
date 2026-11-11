@@ -1,3 +1,4 @@
+using MealRoute.Core.Geo;
 using MealRoute.Core.Evaluation;
 using MealRoute.Core.Model;
 using static MealRoute.Tests.Evaluation.TestInstances;
@@ -110,6 +111,34 @@ public class RouteEvaluatorTests
         var c = new RouteEvaluator(inst, Oracle(inst)).EvaluateCost(0, new[] { 0, 1 });
         Assert.True(c.Feasible);
         Assert.Equal(25800, c.Work, 6);
+    }
+
+    [Fact]
+    public void Delay_into_heavier_traffic_is_not_taken_when_it_only_shortens_work()
+    {
+        // Speeds halve from t = 1000. Leaving at 0 drives the first two legs before the peak
+        // (travel 600, waits at B); leaving at 4800 would absorb the wait but drive everything in
+        // the peak (travel 800). Travel ranks above work, so the earlier schedule wins.
+        var inst = Instance(new[] { Stop("A", 100, 0, 5000), Stop("B", 200, 5000, 6000) }, new[] { Vehicle() });
+        var eval = new RouteEvaluator(inst, new PeakOracle(inst, 1000));
+        var r = eval.Evaluate(0, new[] { 0, 1 });
+        Assert.True(r.IsFeasible);
+        Assert.Equal(600, r.TravelSeconds, 6);
+        Assert.True(r.Departure + 200 <= 1000);
+        var c = eval.EvaluateCost(0, new[] { 0, 1 });
+        Assert.Equal(r.Departure, c.Departure);
+        Assert.Equal(600, c.Travel, 6);
+    }
+
+    [Fact]
+    public void Delay_into_heavier_traffic_is_taken_when_the_work_limit_requires_it()
+    {
+        var inst = Instance(new[] { Stop("A", 100, 0, 5000), Stop("B", 200, 5000, 6000) }, new[] { Vehicle(maxWork: 1000) });
+        var r = new RouteEvaluator(inst, new PeakOracle(inst, 1000)).Evaluate(0, new[] { 0, 1 });
+        Assert.True(r.IsFeasible, r.FirstViolation?.Message);
+        Assert.Equal(4800, r.Departure, 6);
+        Assert.Equal(800, r.TravelSeconds, 6);
+        Assert.Equal(800, r.WorkSeconds, 6);
     }
 
     [Fact]
@@ -299,6 +328,23 @@ public class RouteEvaluatorTests
         }
         return best;
     }
+}
+
+/// <summary>Planar distance at 1 m/s, slowing to 0.5 m/s from <paramref name="peak"/> on (FIFO).</summary>
+internal sealed class PeakOracle(ProblemInstance inst, double peak) : MealRoute.Core.Travel.ITravelTimeOracle
+{
+    private readonly GeoPoint[] _points = inst.LocationPoints().ToArray();
+    public int LocationCount => _points.Length;
+    public double ArrivalTime(int from, int to, double departure)
+    {
+        var a = _points[from];
+        var b = _points[to];
+        var d = Math.Sqrt((a.Lon - b.Lon) * (a.Lon - b.Lon) + (a.Lat - b.Lat) * (a.Lat - b.Lat));
+        if (departure >= peak) return departure + 2 * d;
+        if (departure + d <= peak) return departure + d;
+        return peak + 2 * (d - (peak - departure));
+    }
+    public MealRoute.Core.Travel.LegResult Leg(int from, int to, double departure) => new(ArrivalTime(from, to, departure), 0);
 }
 
 internal sealed class InfiniteOracle(int count) : MealRoute.Core.Travel.ITravelTimeOracle
