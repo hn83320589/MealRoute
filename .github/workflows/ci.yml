@@ -42,6 +42,39 @@ jobs:
             }
           }
 
+      - name: Test report (job summary)
+        if: always()
+        shell: pwsh
+        run: |
+          $lines = @('## Test report', '')
+          $trxFiles = Get-ChildItem TestResults -Filter *.trx -Recurse -ErrorAction SilentlyContinue
+          if (-not $trxFiles) { $lines += 'No test results were produced.' }
+          foreach ($file in $trxFiles) {
+            [xml]$trx = Get-Content $file.FullName
+            $c = $trx.TestRun.ResultSummary.Counters
+            $t = $trx.TestRun.Times
+            $seconds = [math]::Round(([datetime]$t.finish - [datetime]$t.start).TotalSeconds, 1)
+            $lines += "**$($trx.TestRun.ResultSummary.outcome)**: $($c.passed) passed, $($c.failed) failed, $($c.notExecuted) skipped of $($c.total) in $seconds s (benchmarks excluded; commit $env:GITHUB_SHA)."
+            $lines += ''
+            # Test class per result: map testId -> class name through the definitions.
+            $classOf = @{}
+            foreach ($d in $trx.TestRun.TestDefinitions.UnitTest) { $classOf[$d.id] = $d.TestMethod.className }
+            $lines += '| Test class | Passed | Failed |'
+            $lines += '|---|---:|---:|'
+            $trx.TestRun.Results.UnitTestResult | Group-Object { $classOf[$_.testId] -replace '^MealRoute\.Tests\.', '' } | Sort-Object Name | ForEach-Object {
+              $passed = @($_.Group | Where-Object outcome -eq 'Passed').Count
+              $failed = @($_.Group | Where-Object outcome -eq 'Failed').Count
+              $lines += "| $($_.Name) | $passed | $failed |"
+            }
+            $failedTests = $trx.TestRun.Results.UnitTestResult | Where-Object outcome -eq 'Failed'
+            if ($failedTests) {
+              $lines += '', '### Failed', ''
+              $failedTests | ForEach-Object { $lines += "- ``$($_.testName)``" }
+            }
+          }
+          $lines += '', 'Full results: the `test-results` artifact (TRX) of this run.'
+          $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
       - name: Publish WinUI app (win-x64)
         run: dotnet publish src/MealRoute.App -c Release -r win-x64 -p:Platform=x64 -o publish/win-x64
 
