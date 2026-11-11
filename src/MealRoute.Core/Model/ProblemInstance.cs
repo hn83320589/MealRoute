@@ -27,6 +27,12 @@ public sealed class ProblemInstance
     public int VehicleStartLocation(int vehicle) => Stops.Count + vehicle;
     public int VehicleEndLocation(int vehicle) => Stops.Count + Vehicles.Count + vehicle;
 
+    /// <summary>User-facing name of a location (stop name and id, or the vehicle whose depot it is), for warnings.</summary>
+    public string DescribeLocation(int location) =>
+        location < Stops.Count
+            ? $"站點「{Stops[location].Name}」（{Stops[location].Id}）"
+            : $"車輛 {Vehicles[(location - Stops.Count) % Vehicles.Count].Id} 的據點";
+
     /// <summary>Coordinates of all locations in oracle order.</summary>
     public IReadOnlyList<GeoPoint> LocationPoints() =>
         Stops.Select(s => s.Location)

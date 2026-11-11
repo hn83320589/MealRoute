@@ -128,10 +128,10 @@ public sealed class PlanningWorkspace
         SearchOracle = model.Search;
         ExactOracle = model.Exact;
         var S = Instance.Stops.Count;
-        foreach (var (w, i) in model.Snapped.Warnings.Select(w => (w, int.Parse(w.PointId.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture))))
+        foreach (var w in model.Snapped.Warnings)
         {
-            var what = i < S ? $"站點「{Instance.Stops[i].Name}」（{Instance.Stops[i].Id}）" : $"車輛 {Instance.Vehicles[(i - S) % Instance.Vehicles.Count].Id} 的據點";
-            Warnings.Add(new WorkspaceWarning(WarningKind.Snapping, $"{what}：{w.Message}", i < S ? i : null));
+            var i = TravelModel.LocationOf(w);
+            Warnings.Add(new WorkspaceWarning(WarningKind.Snapping, $"{Instance.DescribeLocation(i)}：{w.Message}", i < S ? i : null));
         }
         var solution = Project.Solution is { } sol && sol.Routes.Count == Instance.Vehicles.Count ? sol : EmptySolution(Instance);
         Editor = new PlanEditor(Instance, model.Search, model.Exact, solution);

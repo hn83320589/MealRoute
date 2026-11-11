@@ -225,7 +225,7 @@ L1 的性質（皆有性質測試）：
 
 ## 測試與參考實作
 
-`dotnet test` 目前共 **251** 個測試案例，含 25 組以上的性質測試。性質測試以固定種子產生隨機輸入，失敗時訊息會印出可重現的種子（`Property.Replay(seed, …)`）。
+`dotnet test` 目前共 **254** 個測試案例，含 25 組以上的性質測試。性質測試以固定種子產生隨機輸入，失敗時訊息會印出可重現的種子（`Property.Replay(seed, …)`）。
 
 `tests/MealRoute.Tests/Reference/` 的參考實作與正式程式碼**互相獨立**：它們只讀取 Core 的純資料型別（`Stop`、`Vehicle`、`Solution` 等 record），計算邏輯全部自行實作，不呼叫正式的演算法或評估程式碼。
 

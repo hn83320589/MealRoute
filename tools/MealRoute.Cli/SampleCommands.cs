@@ -85,6 +85,8 @@ internal static class SampleCommands
         Console.WriteLine($"專案：{project.Name}");
         Console.WriteLine($"路網：{net.NodeCount} 節點、{net.EdgeCount} 有向邊、{analysis.SmallComponents.Count} 個小分量；匯入 {tNetwork:F2} s");
         Console.WriteLine($"吸附警告：{model.Snapped.Warnings.Count}；L1 快取建立 {tModel:F2} s（{model.Search.SampleTimes.Count} 個取樣時刻）");
+        foreach (var w in model.Snapped.Warnings)
+            Console.WriteLine($"  {inst.DescribeLocation(TravelModel.LocationOf(w))}：{w.Message}");
         Console.WriteLine($"第一個可行解：匯入起算 {firstFeasibleAt:F2} s，{first}");
         Console.WriteLine($"最佳化 {tOpt:F1} s、{res.Iterations} 次迭代：{res.Objective}");
         Console.WriteLine($"必送 {mandatoryTotal - res.Objective.UnservedMandatory}/{mandatoryTotal} 已服務；未服務 {res.Solution.Unserved.Count} 站；休息 {breaks} 次；記憶體峰值 {peakMb:F0} MB");

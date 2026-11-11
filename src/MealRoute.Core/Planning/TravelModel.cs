@@ -42,6 +42,10 @@ public sealed class TravelModel
         return new TravelModel(snapped, search, exact, nodes);
     }
 
+    /// <summary>Location index (oracle order) that a snapping warning refers to.</summary>
+    public static int LocationOf(SnapWarning warning) =>
+        int.Parse(warning.PointId.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>Driven path of a route (exact shortest paths at the planned departure times).</summary>
     public IReadOnlyList<GeoPoint> RouteGeometry(ProblemInstance instance, RoutePlan route)
     {
