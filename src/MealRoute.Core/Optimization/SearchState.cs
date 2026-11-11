@@ -39,6 +39,20 @@ internal sealed class SearchState
         return c;
     }
 
+    /// <summary>Replaces this state's content with <paramref name="other"/>'s (same vehicle count).</summary>
+    public void CopyFrom(SearchState other)
+    {
+        for (var v = 0; v < Routes.Length; v++)
+        {
+            Routes[v].Clear();
+            Routes[v].AddRange(other.Routes[v]);
+            Costs[v] = other.Costs[v];
+            Departures[v] = other.Departures[v];
+        }
+        Unassigned.Clear();
+        Unassigned.AddRange(other.Unassigned);
+    }
+
     public bool AllRoutesFeasible()
     {
         foreach (var c in Costs) if (!c.Feasible) return false;

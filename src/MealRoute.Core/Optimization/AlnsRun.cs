@@ -244,8 +244,80 @@ internal sealed class AlnsRun
             }
             if (_shouldStop()) return;
             if (InterRoutePass(s)) changed = true;
+            if (_shouldStop()) return;
+            if (UnservedSwapPass(s)) changed = true;
             if (!changed) return;
         }
+    }
+
+    // ------------------------------------------------------------------ choosing which mandatory stop to drop
+
+    /// <summary>
+    /// When some mandatory stops cannot be served, the objective still depends on which ones are
+    /// dropped: a smaller or better-placed mandatory stop can leave room for optional ones. Repair
+    /// inserts by tier and cost, so it keeps re-inserting the same mandatory stop. This move takes
+    /// each unserved mandatory stop, removes a related served mandatory stop (the granular
+    /// neighbours, which include close time windows), inserts the unserved one at its cheapest
+    /// position, then fills the freed room with unserved optional stops (highest priority first).
+    /// The first trial that improves the exact objective is applied.
+    /// </summary>
+    private bool UnservedSwapPass(SearchState s)
+    {
+        var missing = s.Unassigned.Where(x => _inst.Stops[x].Mandatory).ToArray();
+        if (missing.Length == 0) return false;
+        var baseline = s.Objective(_inst);
+        var neighbours = Neighbours();
+        foreach (var u in missing)
+        {
+            foreach (var m in neighbours[u])
+            {
+                if (_shouldStop()) return false;
+                if (!_inst.Stops[m].Mandatory || !TryLocate(s, m, out var v, out var p)) continue;
+                var trial = s.Clone();
+                trial.Routes[v].RemoveAt(p);
+                Reevaluate(trial, v);
+                trial.AddUnassigned(m);
+                if (!InsertCheapest(trial, u)) continue;
+                foreach (var o in trial.Unassigned.Where(x => !_inst.Stops[x].Mandatory && x != m)
+                             .OrderByDescending(x => _inst.Stops[x].Priority).ThenBy(x => x).ToArray())
+                    InsertCheapest(trial, o);
+                if (trial.Objective(_inst) < baseline)
+                {
+                    s.CopyFrom(trial);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Finds a stop in a route the search may change (not locked, not in a frozen prefix).</summary>
+    private bool TryLocate(SearchState s, int stop, out int vehicle, out int position)
+    {
+        for (vehicle = 0; vehicle < s.Routes.Length; vehicle++)
+        {
+            if (_locked[vehicle]) continue;
+            position = s.Routes[vehicle].IndexOf(stop);
+            if (position >= _frozen[vehicle]) return true;
+        }
+        vehicle = position = -1;
+        return false;
+    }
+
+    private bool InsertCheapest(SearchState s, int stop)
+    {
+        var best = new Insertion(Infeasible, -1);
+        var bv = -1;
+        for (var v = 0; v < s.Routes.Length; v++)
+        {
+            var ins = BestInsertion(s, stop, v, 0);
+            if (ins.Cost < best.Cost) { best = ins; bv = v; }
+        }
+        if (bv < 0) return false;
+        s.Routes[bv].Insert(best.Position, stop);
+        Reevaluate(s, bv);
+        s.Unassigned.Remove(stop);
+        return true;
     }
 
     // ------------------------------------------------------------------ inter-route (granular) polish
