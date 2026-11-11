@@ -8,12 +8,13 @@ namespace MealRoute.Tests.Reference;
 /// <list type="bullet">
 /// <item>Per vehicle, a DFS enumerates every stop sequence (prefix). Each prefix, closed back to
 /// the depot, is a candidate route for exactly that stop subset; the best per subset is kept.</item>
-/// <item>Schedule semantics (from the spec + confirmed design): depart at max(earliest start,
-/// first window start − travel); wait for windows; breaks of the given length may be taken after
-/// any service and reset accumulated driving, which must never exceed the limit. In static mode
-/// the delayed departure never makes a route infeasible that the earliest departure would allow
-/// (times from the first stop on are identical, work time only shrinks), so it is the only one used.</item>
-/// <item>Per sequence the best schedule minimises travel (constant here) then return time.</item>
+/// <item>Schedule semantics: the departure is a decision (≥ earliest start); the vehicle waits only
+/// when it arrives before a window opens; breaks of the given length may be taken after any service
+/// and reset accumulated driving, which must never exceed the limit. Work time is return minus
+/// departure, so for a fixed sequence and break choice the best departure is the latest one that
+/// still returns as early as possible. It is found by a backward pass of latest service starts
+/// from the earliest return (an algorithm independent of the production forward-slack one).</item>
+/// <item>Per sequence the best schedule minimises travel (constant here) then work time.</item>
 /// <item>A DP over vehicles and subsets combines routes; the lexicographic objective is additive.</item>
 /// </list>
 /// </summary>
@@ -144,9 +145,11 @@ internal static class RefExhaustiveSolver
         }
         var breaksPossible = maxLeg * (n + 1) > limit;
 
-        // state: position (stop or -1), time after service (+break), drive since break, travel, departure, mask, meals, boxes
+        // state: position (stop or -1), time after service (+break), drive since break, travel, mask, meals, boxes.
+        // The forward times are the earliest possible (departing at the earliest start).
         var seq = new List<int>();
-        void Dfs(int at, double t, double drive, double travel, double dep, int mask, int meals, int boxes)
+        var brkAfter = new List<bool>();
+        void Dfs(int at, double t, double drive, double travel, int mask, int meals, int boxes)
         {
             // close the route if non-empty
             if (mask != 0)
@@ -155,10 +158,14 @@ internal static class RefExhaustiveSolver
                 if (drive + back <= limit)
                 {
                     var endT = t + back;
-                    if (endT <= veh.LatestEnd && endT - dep <= veh.MaxWorkSeconds)
+                    if (endT <= veh.LatestEnd)
                     {
-                        var rv = new RouteValue(travel + back, endT - dep, seq.ToArray());
-                        if (rv.BetterThan(best[mask])) best[mask] = rv;
+                        var work = endT - LatestDeparture(endT);
+                        if (work <= veh.MaxWorkSeconds)
+                        {
+                            var rv = new RouteValue(travel + back, work, seq.ToArray());
+                            if (rv.BetterThan(best[mask])) best[mask] = rv;
+                        }
                     }
                 }
             }
@@ -169,29 +176,46 @@ internal static class RefExhaustiveSolver
                 var stop = inst.Stops[s];
                 if (meals + stop.Meals > veh.MealCapacity || boxes + stop.Boxes > veh.BoxCapacity) continue;
 
-                double legFrom, departTime = t, d = dep;
                 (double X, double Y) fromPt = at < 0 ? start : pts[at];
-                legFrom = Dist(fromPt, pts[s]);
-                if (at < 0)
-                {
-                    d = Math.Max(veh.EarliestStart, stop.WindowStart - legFrom);
-                    departTime = d;
-                }
+                var legFrom = Dist(fromPt, pts[s]);
                 if (drive + legFrom > limit) continue;
-                var arr = departTime + legFrom;
+                var arr = t + legFrom;
                 var startService = Math.Max(arr, stop.WindowStart);
                 if (startService > stop.WindowEnd) continue;
                 var after = startService + stop.ServiceSeconds;
                 var nm = mask | 1 << s;
 
                 seq.Add(s);
-                Dfs(s, after, drive + legFrom, travel + legFrom, d, nm, meals + stop.Meals, boxes + stop.Boxes);
+                brkAfter.Add(false);
+                Dfs(s, after, drive + legFrom, travel + legFrom, nm, meals + stop.Meals, boxes + stop.Boxes);
                 if (breaksPossible)
-                    Dfs(s, after + brk, 0, travel + legFrom, d, nm, meals + stop.Meals, boxes + stop.Boxes);
+                {
+                    brkAfter[^1] = true;
+                    Dfs(s, after + brk, 0, travel + legFrom, nm, meals + stop.Meals, boxes + stop.Boxes);
+                }
                 seq.RemoveAt(seq.Count - 1);
+                brkAfter.RemoveAt(brkAfter.Count - 1);
             }
         }
 
-        Dfs(-1, veh.EarliestStart, 0, 0, veh.EarliestStart, 0, 0, 0);
+        // Latest departure whose schedule (same sequence and breaks) still returns by endT: walk back
+        // from the return, each service starting no later than its window end nor than the next
+        // leg allows. Static travel, so arriving no later than that start keeps everything after.
+        double LatestDeparture(double endT)
+        {
+            var latest = endT;
+            var next = end;
+            for (var i = seq.Count - 1; i >= 0; i--)
+            {
+                var stop = inst.Stops[seq[i]];
+                var leaveBy = latest - Dist(pts[seq[i]], next);
+                var startBy = leaveBy - stop.ServiceSeconds - (brkAfter[i] ? brk : 0);
+                latest = Math.Min(stop.WindowEnd, startBy);
+                next = pts[seq[i]];
+            }
+            return Math.Max(veh.EarliestStart, latest - Dist(start, next));
+        }
+
+        Dfs(-1, veh.EarliestStart, 0, 0, 0, 0, 0);
     }
 }

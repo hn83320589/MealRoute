@@ -73,6 +73,51 @@ public class OptimizerPropertyTests(ITestOutputHelper output)
         Assert.True(worstGap <= 0.02, $"worst gap {worstGap:P2}. " + string.Join(" | ", failures.Take(5)));
     }
 
+    /// <summary>
+    /// Lunch and dinner windows with a tight work-time limit: routes are only feasible when the
+    /// departure absorbs the gap, and capacity is sometimes too small to serve every mandatory stop.
+    /// </summary>
+    internal static ProblemInstance TwoShiftInstance(Random r)
+    {
+        var n = r.Next(4, 10);
+        var V = r.Next(1, 4);
+        var stops = new List<Stop>();
+        for (var i = 0; i < n; i++)
+        {
+            var x = (r.NextDouble() - 0.5) * 3_000;
+            var y = (r.NextDouble() - 0.5) * 3_000;
+            var a = r.NextDouble() < 0.5 ? 3_000 + r.NextDouble() * 1_000 : 12_000 + r.NextDouble() * 1_000;
+            stops.Add(new Stop($"s{i}", $"站{i}", new GeoPoint(y, x), "", "", r.Next(1, 4), r.Next(0, 2), r.Next(0, 3) * 120,
+                a, a + 600 + r.NextDouble() * 1_500, r.NextDouble() < 0.6, r.Next(1, 6)));
+        }
+        var vehicles = Enumerable.Range(0, V).Select(v => new Vehicle($"V{v}", $"D{v}", default, default,
+            r.NextDouble() * 500, 20_000, r.Next(3, 10), r.Next(1, 4), 2_500 + r.NextDouble() * 9_000)).ToArray();
+        return new ProblemInstance(stops, vehicles, BreakRule.Default);
+    }
+
+    [Fact]
+    public void Property_optimizer_matches_exhaustive_optimum_with_lunch_and_dinner_windows()
+    {
+        const int count = 120;
+        var same = 0;
+        var failures = new List<string>();
+        for (var i = 0; i < count; i++)
+        {
+            var seed = 52_000 + i;
+            var inst = TwoShiftInstance(new Random(seed));
+            var exhaustive = RefExhaustiveSolver.Solve(inst);
+            var o = OptimizerTests.Optimize(inst, new OptimizerOptions { Seed = (ulong)seed, MaxIterations = 4_000, Runs = 4 }).Objective;
+            var tiersEqual = o.UnservedMandatory == exhaustive.UnservedMandatory && o.UnservedOptionalPriority == exhaustive.UnservedPriority && o.VehiclesUsed == exhaustive.Vehicles;
+            if (tiersEqual && Math.Abs(o.TravelSeconds - exhaustive.Travel) <= 1e-6 && Math.Abs(o.WorkSeconds - exhaustive.Work) <= 1.0) { same++; continue; }
+            var ours = new RefExhaustiveSolver.Objective(o.UnservedMandatory, o.UnservedOptionalPriority, o.VehiclesUsed, o.TravelSeconds, o.WorkSeconds - 1.0);
+            Assert.False(RefExhaustiveSolver.Less(ours, exhaustive) && !tiersEqual, $"seed {seed}: optimizer {o} beats exhaustive {exhaustive}");
+            failures.Add($"seed {seed}: ours {o} vs exhaustive {exhaustive}");
+        }
+        output.WriteLine($"identical {same}/{count}");
+        foreach (var f in failures) output.WriteLine(f);
+        Assert.True(same >= 0.95 * count, $"only {same}/{count} identical. " + string.Join(" | ", failures.Take(5)));
+    }
+
     [Fact]
     public void Property_every_optimized_static_solution_passes_the_reference_checker()
     {

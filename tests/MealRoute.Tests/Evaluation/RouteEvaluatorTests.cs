@@ -49,6 +49,69 @@ public class RouteEvaluatorTests
         Assert.Equal(400, r.Visits[0].Arrival);
     }
 
+    // ---- Departure as a decision (mid-route waiting is absorbed by leaving later) ----
+
+    [Fact]
+    public void Departure_is_delayed_to_absorb_mid_route_waiting_which_makes_a_tight_work_limit_feasible()
+    {
+        // depot 0 -> A 100 (open until 5000) -> B 200 (opens 5000). Leaving at 0 waits 4800 s at B
+        // (work 5200 > 1000). Leaving at 4800 waits nowhere: work 400.
+        var inst = Instance(new[] { Stop("A", 100, 0, 5000), Stop("B", 200, 5000, 5100) }, new[] { Vehicle(maxWork: 1000) });
+        var r = Eval(inst, 0, 1);
+        Assert.True(r.IsFeasible, r.FirstViolation?.Message);
+        Assert.Equal(4800, r.Departure, 6);
+        Assert.Equal(4900, r.Visits[0].ServiceStart, 6);
+        Assert.Equal(5000, r.Visits[1].Arrival, 6);
+        Assert.Equal(5200, r.EndArrival, 6);
+        Assert.Equal(400, r.WorkSeconds, 6);
+
+        var c = new RouteEvaluator(inst, Oracle(inst)).EvaluateCost(0, new[] { 0, 1 });
+        Assert.True(c.Feasible);
+        Assert.Equal(4800, c.Departure, 6);
+        Assert.Equal(400, c.Work, 6);
+    }
+
+    [Fact]
+    public void Departure_delay_stops_where_an_earlier_window_would_close()
+    {
+        // A closes at 2000, so the latest departure is 1900 and 2900 s of waiting remain at B.
+        var inst = Instance(new[] { Stop("A", 100, 0, 2000), Stop("B", 200, 5000, 5100) }, new[] { Vehicle() });
+        var r = Eval(inst, 0, 1);
+        Assert.True(r.IsFeasible);
+        Assert.Equal(1900, r.Departure, 6);
+        Assert.Equal(2000, r.Visits[0].ServiceStart, 6);
+        Assert.Equal(5000, r.Visits[1].ServiceStart, 6);
+        Assert.Equal(5200 - 1900, r.WorkSeconds, 6);
+    }
+
+    [Fact]
+    public void Fixed_departure_is_never_delayed()
+    {
+        var veh = Vehicle(maxWork: 1000) with { FixedDeparture = true };
+        var inst = Instance(new[] { Stop("A", 100, 0, 5000), Stop("B", 200, 5000, 5100) }, new[] { veh });
+        var r = Eval(inst, 0, 1);
+        Assert.Equal(0, r.Departure);
+        Assert.False(r.IsFeasible);
+        Assert.Equal(ViolationKind.MaxWork, r.FirstViolation!.Kind);
+    }
+
+    [Fact]
+    public void Departure_delay_also_absorbs_waiting_after_a_break()
+    {
+        // depot 0 -> A 6000 -> B 12000 (opens 30000) -> depot: 24000 s driving needs a break at B.
+        // Leaving at 0 waits 18000 s at B (work 43800 > 30000); leaving at 18000 makes it 25800.
+        var inst = Instance(new[] { Stop("A", 6000), Stop("B", 12000, 30000, 40000) }, new[] { Vehicle(maxWork: 30000) });
+        var r = Eval(inst, 0, 1);
+        Assert.True(r.IsFeasible, r.FirstViolation?.Message);
+        Assert.True(r.Visits[1].BreakAfter);
+        Assert.Equal(18000, r.Departure, 6);
+        Assert.Equal(43800, r.EndArrival, 6);
+        Assert.Equal(25800, r.WorkSeconds, 6);
+        var c = new RouteEvaluator(inst, Oracle(inst)).EvaluateCost(0, new[] { 0, 1 });
+        Assert.True(c.Feasible);
+        Assert.Equal(25800, c.Work, 6);
+    }
+
     [Fact]
     public void Late_arrival_reports_the_stop_name_arrival_and_window()
     {
@@ -159,7 +222,9 @@ public class RouteEvaluatorTests
         var r = Eval(inst, 0, 1, 2);
         Assert.True(r.IsFeasible);
         Assert.Equal(new[] { false, true, false }, r.Visits.Select(v => v.BreakAfter));
-        Assert.Equal(16800, r.Visits[2].Arrival, 6);
+        // Arriving at 16800 would wait 200 s, so the departure moves to 200 and arrives right at 17000.
+        Assert.Equal(200, r.Departure, 6);
+        Assert.Equal(17000, r.Visits[2].Arrival, 6);
         Assert.Equal(17000, r.Visits[2].ServiceStart, 6);
         Assert.Equal(26000, r.EndArrival, 6);
         Assert.Equal(r.EndArrival, BruteForceEarliestReturn(inst, new[] { 0, 1, 2 }), 6);

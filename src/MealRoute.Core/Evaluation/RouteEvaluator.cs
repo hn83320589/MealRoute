@@ -32,11 +32,16 @@ public sealed class RouteEvaluation
 /// <summary>
 /// Evaluates one vehicle's stop sequence:
 /// <list type="number">
-/// <item>Departure: delayed from the vehicle's earliest start so the first stop needs no waiting
-/// (within 0.5 s); if that schedule is infeasible the earliest start is tried.</item>
+/// <item>Departure is a decision: starting from the earliest start, the vehicle leaves later by as
+/// much waiting as the route can absorb (forward time slack: the total waiting, capped where an
+/// earlier window would close), so waiting before the first stop and in the middle of the route
+/// both stop counting as work. Arrival times only move later with a later departure (FIFO), so the
+/// earliest start decides time-window feasibility and the latest return; the delay only shortens
+/// work time, which is why it matters for the work-time limit. With time-dependent travel the
+/// delay is refined by a few fixed-point steps, never accepting one that breaks the schedule.</item>
 /// <item>Breaks: considered only where accumulated driving would otherwise exceed the limit; every
 /// allowed stop up to that point is tried (recursively for further breaks) and the feasible
-/// schedule with least travel time, then earliest return, is kept.</item>
+/// schedule with least travel time, then least work time, then earliest return, is kept.</item>
 /// <item>Infeasible routes get a diagnostic schedule (latest-possible breaks, continuing past
 /// violations) and the earliest violation in time.</item>
 /// </list>
@@ -44,6 +49,9 @@ public sealed class RouteEvaluation
 /// </summary>
 public sealed class RouteEvaluator
 {
+    /// <summary>Remaining absorbable waiting (seconds) below which the departure is not moved further.</summary>
+    private const double SettleTolerance = 0.5;
+
     private readonly ProblemInstance _inst;
     private readonly ITravelTimeOracle _oracle;
 
@@ -73,20 +81,19 @@ public sealed class RouteEvaluator
         else if (boxes > veh.BoxCapacity)
             capacity = new Violation(ViolationKind.BoxCapacity, -1, dStar, $"保溫箱 {boxes} 個超過容量 {veh.BoxCapacity} 個");
 
+        var diagDeparture = dStar;
         if (capacity is null)
         {
-            foreach (var d in dStar == d0 ? new[] { d0 } : new[] { dStar, d0 })
+            if (Plan(vehicle, route, out var cost, out var breaks))
             {
-                var breaks = SearchBreaks(vehicle, route, d);
-                if (breaks is not null)
-                {
-                    var sim = Simulate(vehicle, route, d, breaks, diagnostic: false);
-                    return Build(vehicle, route, sim, meals, boxes, null);
-                }
+                var sim = Simulate(vehicle, route, cost.Departure, breaks, diagnostic: false);
+                return Build(vehicle, route, sim, meals, boxes, null);
             }
+            // Only the work-time limit failed: diagnose at the departure with the least work.
+            if (!double.IsNaN(cost.Departure)) diagDeparture = cost.Departure;
         }
 
-        var diag = Simulate(vehicle, route, dStar, null, diagnostic: true);
+        var diag = Simulate(vehicle, route, diagDeparture, null, diagnostic: true);
         var first = capacity ?? diag.FirstViolation
             ?? throw new InvalidOperationException("Route reported infeasible but no violation was found.");
         return Build(vehicle, route, diag, meals, boxes, first);
@@ -94,10 +101,12 @@ public sealed class RouteEvaluator
 
     /// <summary>
     /// Same verdict and costs as <see cref="Evaluate"/> without building visits or diagnostics.
-    /// Allocation-free unless the driving limit forces a break search. Optionally writes each
-    /// stop's departure time into <paramref name="departures"/> (length ≥ route length).
+    /// Allocation-free unless the driving limit forces a break search. Optionally writes into
+    /// <paramref name="earliestDepartures"/> (length ≥ route length) each stop's departure time when
+    /// leaving at the earliest start with the chosen breaks: the earliest the vehicle can be there,
+    /// a lower bound that insertion pre-checks rely on (the planned, delayed schedule is later).
     /// </summary>
-    public RouteCost EvaluateCost(int vehicle, ReadOnlySpan<int> route, Span<double> departures = default)
+    public RouteCost EvaluateCost(int vehicle, ReadOnlySpan<int> route, Span<double> earliestDepartures = default)
     {
         if (route.IsEmpty) return RouteCost.Empty;
         var veh = _inst.Vehicles[vehicle];
@@ -105,40 +114,80 @@ public sealed class RouteEvaluator
         foreach (var s in route) { meals += _inst.Stops[s].Meals; boxes += _inst.Stops[s].Boxes; }
         if (meals > veh.MealCapacity || boxes > veh.BoxCapacity) return RouteCost.Infeasible;
 
-        var d0 = veh.EarliestStart;
-        var dStar = DelayedDeparture(vehicle, route[0], d0);
-        var tried = 0;
-        for (var d = dStar; tried < 2; d = d0, tried++)
-        {
-            if (tried == 1 && dStar == d0) break;
-            var status = ForwardNoBreak(vehicle, route, d, departures, out var cost);
-            if (status == ForwardStatus.Feasible) return cost;
-            if (status == ForwardStatus.DrivingLimit)
-            {
-                var arr = route.ToArray();
-                var breaks = SearchBreaks(vehicle, arr, d);
-                if (breaks is not null)
-                {
-                    var sim = Simulate(vehicle, arr, d, breaks, diagnostic: false);
-                    if (!departures.IsEmpty)
-                        for (var i = 0; i < arr.Length; i++) departures[i] = sim.Visits[i].Departure;
-                    return new RouteCost(true, sim.Departure, sim.End, sim.Travel, sim.Distance);
-                }
-            }
-        }
-        return RouteCost.Infeasible;
+        if (!Plan(vehicle, route, out var cost, out var breaks)) return RouteCost.Infeasible;
+        if (!earliestDepartures.IsEmpty) Forward(vehicle, route, veh.EarliestStart, breaks, earliestDepartures, out _, out _);
+        return cost;
     }
 
     private enum ForwardStatus { Feasible, Infeasible, DrivingLimit }
 
-    private ForwardStatus ForwardNoBreak(int vehicle, ReadOnlySpan<int> route, double d, Span<double> departures, out RouteCost cost)
+    /// <summary>
+    /// Chooses breaks and departure. Returns false when infeasible; when only the work-time limit
+    /// failed, <paramref name="cost"/> still carries the least-work departure (otherwise it is NaN).
+    /// </summary>
+    private bool Plan(int vehicle, ReadOnlySpan<int> route, out RouteCost cost, out bool[]? breaks)
+    {
+        var veh = _inst.Vehicles[vehicle];
+        breaks = null;
+        var status = Settle(vehicle, route, null, out cost);
+        if (status == ForwardStatus.DrivingLimit)
+        {
+            breaks = SearchBreaks(vehicle, route.ToArray(), veh.EarliestStart);
+            if (breaks is null) { cost = RouteCost.Infeasible; return false; }
+            status = Settle(vehicle, route, breaks, out cost);
+        }
+        if (status != ForwardStatus.Feasible) { cost = RouteCost.Infeasible; return false; }
+        if (cost.End - (veh.WorkStartedAt ?? cost.Departure) > veh.MaxWorkSeconds)
+        {
+            cost = cost with { Feasible = false };
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Simulates from the earliest start, then leaves later by the waiting the schedule can absorb
+    /// (see the class remarks). Feasibility here excludes the work-time limit.
+    /// </summary>
+    private ForwardStatus Settle(int vehicle, ReadOnlySpan<int> route, bool[]? breaks, out RouteCost cost)
+    {
+        var veh = _inst.Vehicles[vehicle];
+        var status = Forward(vehicle, route, veh.EarliestStart, breaks, default, out cost, out var step);
+        if (status != ForwardStatus.Feasible || veh.FixedDeparture) return status;
+
+        for (var i = 0; i < 12 && step > SettleTolerance; i++)
+        {
+            if (Forward(vehicle, route, cost.Departure + step, breaks, default, out var later, out var more) == ForwardStatus.Feasible
+                && later.Work < cost.Work)
+            {
+                cost = later;
+                step = more;
+            }
+            else
+            {
+                step /= 2; // time-dependent travel moved a window or the return; try a smaller delay
+            }
+        }
+        return status;
+    }
+
+    /// <summary>
+    /// One pass at departure <paramref name="d"/> with breaks exactly where <paramref name="breaks"/>
+    /// says (none when null; exceeding the driving limit then reports <see cref="ForwardStatus.DrivingLimit"/>).
+    /// Checks windows, driving and the latest return, not the work-time limit. <paramref name="delay"/>
+    /// is the forward time slack at the depot: the total waiting, capped at each stop by its window
+    /// end's remaining room plus the waiting before it.
+    /// </summary>
+    private ForwardStatus Forward(int vehicle, ReadOnlySpan<int> route, double d, bool[]? breaks, Span<double> departures,
+        out RouteCost cost, out double delay)
     {
         cost = RouteCost.Infeasible;
+        delay = 0;
         var veh = _inst.Vehicles[vehicle];
-        var limit = _inst.Breaks.MaxDrivingSeconds;
+        var rule = _inst.Breaks;
         var n = route.Length;
-        double cur = d, drive = veh.InitialDrivingSeconds, distance = 0;
-        var workStart = veh.WorkStartedAt ?? d;
+        double cur = d, drive = veh.InitialDrivingSeconds, travel = 0, distance = 0;
+        double waited = 0, slack = double.PositiveInfinity;
         var from = _inst.VehicleStartLocation(vehicle);
         for (var j = 0; j <= n; j++)
         {
@@ -146,19 +195,31 @@ public sealed class RouteEvaluator
             var leg = _oracle.Leg(from, to, cur);
             if (double.IsInfinity(leg.Arrival)) return ForwardStatus.Infeasible;
             drive += leg.Arrival - cur;
-            if (drive > limit) return ForwardStatus.DrivingLimit;
+            travel += leg.Arrival - cur;
+            if (drive > rule.MaxDrivingSeconds) return breaks is null ? ForwardStatus.DrivingLimit : ForwardStatus.Infeasible;
             distance += leg.DistanceM;
             cur = leg.Arrival;
             if (j == n) break;
             var stop = _inst.Stops[route[j]];
-            if (cur < stop.WindowStart) cur = stop.WindowStart;
+            if (cur < stop.WindowStart)
+            {
+                waited += stop.WindowStart - cur;
+                cur = stop.WindowStart;
+            }
             if (cur > stop.WindowEnd) return ForwardStatus.Infeasible;
+            slack = Math.Min(slack, waited + stop.WindowEnd - cur);
             cur += stop.ServiceSeconds;
+            if (breaks is not null && breaks[j])
+            {
+                cur += rule.BreakSeconds;
+                drive = 0;
+            }
             if (!departures.IsEmpty) departures[j] = cur;
             from = to;
         }
-        if (cur > veh.LatestEnd || cur - workStart > veh.MaxWorkSeconds) return ForwardStatus.Infeasible;
-        cost = new RouteCost(true, d, cur, drive - veh.InitialDrivingSeconds, distance);
+        if (cur > veh.LatestEnd) return ForwardStatus.Infeasible;
+        cost = new RouteCost(true, d, cur, travel, distance);
+        delay = Math.Min(waited, slack);
         return ForwardStatus.Feasible;
     }
 
@@ -222,7 +283,9 @@ public sealed class RouteEvaluator
 
     /// <summary>
     /// Finds the best feasible break placement for departure <paramref name="d"/>; null if none.
-    /// Returned array marks the stop positions after which a break is taken.
+    /// Work time counts the departure delay each placement allows (exact for static travel; the
+    /// caller re-checks the final schedule). Returned array marks the stop positions after which
+    /// a break is taken.
     /// </summary>
     private bool[]? SearchBreaks(int vehicle, int[] route, double d)
     {
@@ -230,17 +293,21 @@ public sealed class RouteEvaluator
         var rule = _inst.Breaks;
         var n = route.Length;
         bool[]? best = null;
-        double bestTravel = double.PositiveInfinity, bestEnd = double.PositiveInfinity;
+        double bestTravel = double.PositiveInfinity, bestWork = double.PositiveInfinity, bestEnd = double.PositiveInfinity;
         var current = new bool[n];
 
-        void Recurse(int origin, double t, double drive, double travel)
+        void Recurse(int origin, double t, double drive, double travel, double waited, double slack)
         {
             var cur = t;
             var curDrive = drive;
             var curTravel = travel;
-            // Service-end time and travel so far at each stop this level simulates.
+            var curWaited = waited;
+            var curSlack = slack;
+            // State after each stop this level simulates: service end, travel, waiting, slack.
             var localEnd = new double[n];
             var localTravel = new double[n];
+            var localWaited = new double[n];
+            var localSlack = new double[n];
 
             for (var j = origin + 1; j <= n; j++)
             {
@@ -257,7 +324,7 @@ public sealed class RouteEvaluator
                     {
                         if (k < 0) continue;
                         current[k] = true;
-                        Recurse(k, localEnd[k] + rule.BreakSeconds, 0, localTravel[k]);
+                        Recurse(k, localEnd[k] + rule.BreakSeconds, 0, localTravel[k], localWaited[k], localSlack[k]);
                         current[k] = false;
                     }
                     return;
@@ -268,12 +335,19 @@ public sealed class RouteEvaluator
                 cur = arr;
                 if (j == n)
                 {
-                    if (arr > veh.LatestEnd || arr - (veh.WorkStartedAt ?? d) > veh.MaxWorkSeconds) return;
+                    if (arr > veh.LatestEnd) return;
+                    var departure = veh.FixedDeparture ? d : d + Math.Min(curWaited, curSlack);
+                    if (arr - (veh.WorkStartedAt ?? departure) > veh.MaxWorkSeconds) return;
+                    var work = arr - departure;
                     // Travel sums of different placements differ by float noise only when they are
-                    // "equal", so compare with a tolerance and let the earlier return decide.
-                    if (curTravel < bestTravel - 1e-9 || (Math.Abs(curTravel - bestTravel) <= 1e-9 && arr < bestEnd))
+                    // "equal", so compare with a tolerance; then least work, then earliest return.
+                    var better = curTravel < bestTravel - 1e-9
+                        || (Math.Abs(curTravel - bestTravel) <= 1e-9
+                            && (work < bestWork - 1e-9 || (Math.Abs(work - bestWork) <= 1e-9 && arr < bestEnd)));
+                    if (better)
                     {
                         bestTravel = curTravel;
+                        bestWork = work;
                         bestEnd = arr;
                         best = (bool[])current.Clone();
                     }
@@ -281,15 +355,19 @@ public sealed class RouteEvaluator
                 }
 
                 var stop = _inst.Stops[route[j]];
+                if (arr < stop.WindowStart) curWaited += stop.WindowStart - arr;
                 var start = Math.Max(arr, stop.WindowStart);
                 if (start > stop.WindowEnd) return; // breaks only delay, so no placement helps
+                curSlack = Math.Min(curSlack, curWaited + stop.WindowEnd - start);
                 cur = start + stop.ServiceSeconds;
                 localEnd[j] = cur;
                 localTravel[j] = curTravel;
+                localWaited[j] = curWaited;
+                localSlack[j] = curSlack;
             }
         }
 
-        Recurse(-1, d, veh.InitialDrivingSeconds, 0);
+        Recurse(-1, d, veh.InitialDrivingSeconds, 0, 0, double.PositiveInfinity);
         return best;
     }
 

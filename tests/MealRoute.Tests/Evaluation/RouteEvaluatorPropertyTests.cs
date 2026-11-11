@@ -200,7 +200,18 @@ public class RouteCostPropertyTests
             Assert.Equal(full.EndArrival, fast.End);
             Assert.Equal(full.TravelSeconds, fast.Travel, 9);
             Assert.Equal(full.DistanceM, fast.Distance, 9);
-            Assert.Equal(full.Visits.Select(v => v.Departure), deps);
+            // Departures reported for pruning come from leaving at the earliest start (same breaks).
+            var t = inst.Vehicles[0].EarliestStart;
+            var x = (inst.Vehicles[0].StartDepot.Lon, inst.Vehicles[0].StartDepot.Lat);
+            for (var i = 0; i < route.Length; i++)
+            {
+                var st = inst.Stops[route[i]];
+                t += Math.Sqrt(Math.Pow(st.Location.Lon - x.Item1, 2) + Math.Pow(st.Location.Lat - x.Item2, 2));
+                t = Math.Max(t, st.WindowStart) + st.ServiceSeconds + (full.Visits[i].BreakAfter ? inst.Breaks.BreakSeconds : 0);
+                x = (st.Location.Lon, st.Location.Lat);
+                Assert.Equal(t, deps[i], 6);
+                Assert.True(deps[i] <= full.Visits[i].Departure + 1e-9);
+            }
         });
     }
 }
